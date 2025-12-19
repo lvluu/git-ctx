@@ -68,6 +68,32 @@ git profile apply
 
 - Select a profile to apply globally
 
+### Auto-applying per repo via `.gitprofilerc`
+
+You can automatically apply a profile based on a `.gitprofilerc` file.
+
+- If `<repo-root>/.gitprofilerc` exists, it applies **local** config (`git config --local ...`).
+- Otherwise, if `~/.gitprofilerc` exists, it applies **global** config (`git config --global ...`).
+
+Create a `.gitprofilerc` file containing the profile key you saved (the map key in `~/.git-profiles.json`):
+
+```text
+work
+```
+
+Then run:
+
+```bash
+git profile auto
+```
+
+By default, `auto` **respects existing** `user.name` / `user.email` already set in that scope.
+Use `--force` to overwrite:
+
+```bash
+git profile auto --force
+```
+
 ### Exporting Profiles
 
 ```bash

@@ -150,6 +150,7 @@ func getActiveProfile() (string, string, error) {
 
 func main() {
 	configManager := NewConfigManager()
+	git := ExecGitRunner{}
 
 	var rootCmd = &cobra.Command{
 		Use:     "git-profile",
@@ -356,24 +357,63 @@ func main() {
 
 			profile := configManager.Profiles[selectedProfile]
 
-			gitCommands := [][]string{
-				{"config", "user.name", profile.Name},
-				{"config", "user.email", profile.Email},
-			}
-
-			for _, gitCmd := range gitCommands {
-				cmd := exec.Command("git", gitCmd...)
-				if err := cmd.Run(); err != nil {
-					fmt.Printf("Error applying profile: %v\n", err)
-					return
-				}
+			// Preserve existing behavior: no explicit scope, always overwrite.
+			_, applyErr := applyProfileInScope(git, "", "", profile, true)
+			if applyErr != nil {
+				fmt.Printf("Error applying profile: %v\n", applyErr)
+				return
 			}
 
 			fmt.Printf("Profile '%s' applied successfully!\n", selectedProfile)
 		},
 	}
 
-	rootCmd.AddCommand(listCmd, addCmd, editCmd, removeCmd, applyCmd)
+	var autoForce bool
+	var autoCmd = &cobra.Command{
+		Use:   "auto",
+		Short: "Automatically apply profile from .gitprofilerc",
+		Run: func(cmd *cobra.Command, args []string) {
+			resolver := AutoResolver{
+				GetRepoRoot: func() (string, bool, error) { return findRepoRoot(git) },
+				GetHomeDir:  os.UserHomeDir,
+				ReadFile:    os.ReadFile,
+				FileExists: func(path string) bool {
+					_, err := os.Stat(path)
+					return err == nil
+				},
+			}
+
+			res, err := resolver.Resolve()
+			if err != nil {
+				fmt.Println("Auto apply failed:", err)
+				os.Exit(1)
+			}
+
+			profile, ok := configManager.Profiles[res.ProfileKey]
+			if !ok {
+				fmt.Printf("Auto apply failed: profile '%s' not found. Available profiles:\n", res.ProfileKey)
+				for k := range configManager.Profiles {
+					fmt.Printf("- %s\n", k)
+				}
+				os.Exit(1)
+			}
+
+			changed, err := applyProfileInScope(git, res.WorkDir, res.ScopeFlag, profile, autoForce)
+			if err != nil {
+				fmt.Println("Auto apply failed:", err)
+				os.Exit(1)
+			}
+
+			if changed {
+				fmt.Printf("Applied profile '%s' from %s (%s).\n", res.ProfileKey, res.RCPath, strings.TrimPrefix(res.ScopeFlag, "--"))
+			} else {
+				fmt.Printf("No changes: %s config already sets user.name/user.email (use --force to overwrite).\n", strings.TrimPrefix(res.ScopeFlag, "--"))
+			}
+		},
+	}
+	autoCmd.Flags().BoolVarP(&autoForce, "force", "f", false, "Overwrite existing user.name/user.email")
+
+	rootCmd.AddCommand(listCmd, addCmd, editCmd, removeCmd, applyCmd, autoCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
