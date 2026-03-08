@@ -16,10 +16,12 @@ type AutoResolution struct {
 }
 
 type AutoResolver struct {
-	GetRepoRoot func() (root string, inRepo bool, err error)
-	GetHomeDir  func() (string, error)
-	ReadFile    func(path string) ([]byte, error)
-	FileExists  func(path string) bool
+	GetRepoRoot    func() (root string, inRepo bool, err error)
+	GetHomeDir     func() (string, error)
+	ReadFile       func(path string) ([]byte, error)
+	FileExists     func(path string) bool
+	DirectoryRules []DirectoryRule
+	GetCurrentDir  func() (string, error)
 }
 
 func (r AutoResolver) Resolve() (AutoResolution, error) {
@@ -52,7 +54,29 @@ func (r AutoResolver) Resolve() (AutoResolution, error) {
 		return AutoResolution{ProfileKey: key, ScopeFlag: "--global", WorkDir: "", RCPath: homeRC}, nil
 	}
 
-	return AutoResolution{}, fmt.Errorf("no .gitprofilerc found (checked project root and home directory)")
+	// Fallback: check directory rules from global config.
+	if len(r.DirectoryRules) > 0 && r.GetCurrentDir != nil {
+		currentDir, err := r.GetCurrentDir()
+		if err == nil {
+			cfg := AppConfig{DirectoryRules: r.DirectoryRules}
+			if profile, ok := cfg.MatchDirectoryRule(currentDir); ok {
+				scopeFlag := "--global"
+				workDir := ""
+				if inRepo {
+					scopeFlag = "--local"
+					workDir = repoRoot
+				}
+				return AutoResolution{
+					ProfileKey: profile,
+					ScopeFlag:  scopeFlag,
+					WorkDir:    workDir,
+					RCPath:     "(directory rule)",
+				}, nil
+			}
+		}
+	}
+
+	return AutoResolution{}, fmt.Errorf("no .gitprofilerc found and no directory rule matched")
 }
 
 func (r AutoResolver) readProfileKey(path string) (string, error) {
