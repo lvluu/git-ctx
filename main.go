@@ -430,7 +430,8 @@ func main() {
 	}
 	profileCmd.AddCommand(listCmd, addCmd, editCmd, removeCmd, applyCmd, autoCmd, exportCmd, importCmd)
 
-	rootCmd.AddCommand(profileCmd, initCmd)
+	worktreeCmd := buildWorktreeCmd(appCfg, git)
+	rootCmd.AddCommand(profileCmd, initCmd, worktreeCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
