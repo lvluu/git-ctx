@@ -16,7 +16,19 @@ before:
     - go generate ./...
 
 builds:
-  - env:
+  - id: git-ctx
+    binary: git-ctx
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    goos:
+      - linux
+      - windows
+      - darwin
+  - id: gc
+    binary: gc
+    env:
       - CGO_ENABLED=0
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}

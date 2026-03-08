@@ -153,12 +153,12 @@ func main() {
 	git := ExecGitRunner{}
 
 	var rootCmd = &cobra.Command{
-		Use:     "git-profile",
-		Short:   "🦑 Manage multiple Git profiles easily",
+		Use:     "git-ctx",
+		Short:   "🦑 Manage git identity and worktree context",
 		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 	}
 
-	rootCmd.SetVersionTemplate("🦑 Git Profile CLI\nVersion: {{.Version}}")
+	rootCmd.SetVersionTemplate("🦑 git-ctx\nVersion: {{.Version}}")
 
 	var exportCmd = &cobra.Command{
 		Use:   "export [output-file]",
