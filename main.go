@@ -35,20 +35,12 @@ type ConfigManager struct {
 	Profiles   map[string]Profile
 }
 
-// NewConfigManager creates a new config manager
-func NewConfigManager() *ConfigManager {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	configPath := filepath.Join(homeDir, ".git-profiles.json")
-
+// NewConfigManager creates a new config manager using the given profiles file path.
+func NewConfigManager(configPath string) *ConfigManager {
 	cm := &ConfigManager{
 		ConfigPath: configPath,
 		Profiles:   make(map[string]Profile),
 	}
-
 	cm.load()
 	return cm
 }
@@ -149,7 +141,11 @@ func getActiveProfile() (string, string, error) {
 }
 
 func main() {
-	configManager := NewConfigManager()
+	appCfg, err := loadAppConfig(defaultAppConfigPath())
+	if err != nil {
+		log.Fatal("Failed to load config:", err)
+	}
+	configManager := NewConfigManager(appCfg.ProfilesPath)
 	git := ExecGitRunner{}
 
 	var rootCmd = &cobra.Command{
@@ -413,7 +409,22 @@ func main() {
 	}
 	autoCmd.Flags().BoolVarP(&autoForce, "force", "f", false, "Overwrite existing user.name/user.email")
 
-	rootCmd.AddCommand(listCmd, addCmd, editCmd, removeCmd, applyCmd, autoCmd)
+	var initForce bool
+	var initCmd = &cobra.Command{
+		Use:   "init",
+		Short: "Initialize git-ctx config file (~/.git-ctx.yaml)",
+		Run: func(cmd *cobra.Command, args []string) {
+			cfgPath := defaultAppConfigPath()
+			if err := initAppConfig(cfgPath, initForce); err != nil {
+				fmt.Println("init failed:", err)
+				os.Exit(1)
+			}
+			fmt.Println("Config initialized:", cfgPath)
+		},
+	}
+	initCmd.Flags().BoolVarP(&initForce, "force", "f", false, "Overwrite existing config")
+
+	rootCmd.AddCommand(listCmd, addCmd, editCmd, removeCmd, applyCmd, autoCmd, initCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
