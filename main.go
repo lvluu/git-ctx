@@ -186,7 +186,7 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(exportCmd, importCmd)
+	// exportCmd and importCmd are added to profileCmd below
 
 	var listCmd = &cobra.Command{
 		Use:   "ls",
@@ -424,7 +424,13 @@ func main() {
 	}
 	initCmd.Flags().BoolVarP(&initForce, "force", "f", false, "Overwrite existing config")
 
-	rootCmd.AddCommand(listCmd, addCmd, editCmd, removeCmd, applyCmd, autoCmd, initCmd)
+	var profileCmd = &cobra.Command{
+		Use:   "profile",
+		Short: "Manage git profiles",
+	}
+	profileCmd.AddCommand(listCmd, addCmd, editCmd, removeCmd, applyCmd, autoCmd, exportCmd, importCmd)
+
+	rootCmd.AddCommand(profileCmd, initCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
