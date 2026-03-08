@@ -1,131 +1,78 @@
-# Git Profile CLI
+# git-ctx
 
-## Overview
+Manage git identity and local worktree context from the command line.
 
-`git-profile` is a powerful command-line tool that simplifies managing multiple Git profiles across different projects and environments.
-
-## Features
-
-- 🔄 Easily switch between Git profiles
-- ➕ Interactively add new profiles
-- ✏️ Edit existing profiles
-- 🗑️ Remove profiles
-- 📦 Export and import profile configurations
-- 🖥️ Simple, intuitive CLI interface
-
-## Installation
-
-### Go Install (Recommended)
+## Install
 
 ```bash
-go install github.com/lvluu/git-profile@latest
+go install github.com/lvluu/git-ctx@latest
 ```
 
-### Manual Installation
+Or download a binary from [Releases](https://github.com/lvluu/git-ctx/releases).
 
-Download the appropriate binary for your platform from the [Releases](https://github.com/lvluu/git-profile/releases) page.
-
-## Usage
-
-### Listing Profiles
+## Quick start
 
 ```bash
-git profile ls
+# 1. Create config file
+git ctx init
+
+# 2. Add a shell hook (auto-apply profile on cd)
+echo 'eval "$(git ctx shell-init)"' >> ~/.bashrc
+source ~/.bashrc
+
+# 3. Add profiles
+git ctx profile add   # interactive
+
+# 4. Validate everything
+git ctx doctor
 ```
 
-### Adding a Profile
+## Commands
 
-```bash
-git profile add
+```
+git ctx init                        Create ~/.git-ctx.yaml config
+git ctx shell-init                  Print shell hook snippet
+git ctx doctor                      Validate config and environment
+
+git ctx profile ls                  List profiles (marks active)
+git ctx profile add                 Add profile (interactive)
+git ctx profile edit                Edit profile (interactive)
+git ctx profile rm                  Remove profile (interactive)
+git ctx profile apply               Apply profile (interactive)
+git ctx profile auto [--force]      Auto-apply from .gitprofilerc or directory rules
+git ctx profile export [file]       Export profiles to JSON
+git ctx profile import <file>       Import profiles from JSON
+
+git ctx worktree ls                 List git worktrees
+git ctx worktree add <path>         Add worktree and sync files
+git ctx worktree sync [<path>]      Sync files into one or all worktrees
 ```
 
-- Interactively enter profile name, username, and email
-- Optionally add a signing key
+**`gc`** is a short alias for `git-ctx` (provided by `shell-init`).
 
-### Editing a Profile
+## Directory-based auto profiles
 
-```bash
-git profile edit
+Edit `~/.git-ctx.yaml` to map directories to profiles:
+
+```yaml
+directory_rules:
+  - pattern: "~/work"
+    profile: work
+  - pattern: "~/personal"
+    profile: personal
 ```
 
-- Select a profile to modify
-- Update details interactively
+When you `cd` into `~/work/myrepo`, the **work** profile is applied automatically.
 
-### Removing a Profile
+## Worktree file sync
 
-```bash
-git profile rm
+Create `.git-ctx-sync.yaml` in your repo root (gitignored):
+
+```yaml
+mode: symlink   # or: copy
+files:
+  - app/.env
+  - .vscode/settings.json
 ```
 
-- Select a profile to remove
-- Confirm deletion
-
-### Applying a Profile
-
-```bash
-git profile apply
-```
-
-- Select a profile to apply globally
-
-### Auto-applying per repo via `.gitprofilerc`
-
-You can automatically apply a profile based on a `.gitprofilerc` file.
-
-- If `<repo-root>/.gitprofilerc` exists, it applies **local** config (`git config --local ...`).
-- Otherwise, if `~/.gitprofilerc` exists, it applies **global** config (`git config --global ...`).
-
-Create a `.gitprofilerc` file containing the profile key you saved (the map key in `~/.git-profiles.json`):
-
-```text
-work
-```
-
-Then run:
-
-```bash
-git profile auto
-```
-
-By default, `auto` **respects existing** `user.name` / `user.email` already set in that scope.
-Use `--force` to overwrite:
-
-```bash
-git profile auto --force
-```
-
-### Exporting Profiles
-
-```bash
-git profile export [output-file]
-```
-
-- Export all profiles to a JSON file
-- If no file specified, exports to `~/git-profiles-export.json`
-
-### Importing Profiles
-
-```bash
-git profile import <input-file>
-```
-
-- Import profiles from a JSON file
-- Choose to merge or replace existing profiles
-
-### Checking Version
-
-```bash
-git profile -v
-```
-
-## Configuration
-
-Profiles are stored in `~/.git-profiles.json`
-
-## Contributing
-
-All the contributions are welcome
-
-## Support
-
-If you encounter any issues or have suggestions, please file an issue on GitHub.
+Then `git ctx worktree add ../my-feature` creates the worktree and symlinks each file.
