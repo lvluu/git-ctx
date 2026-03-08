@@ -54,11 +54,28 @@ func main() {
 		},
 	}
 
+	doctorCmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Validate git-ctx configuration and environment",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println("git-ctx doctor")
+			fmt.Println()
+			results := runDoctorChecks(appCfg)
+			printDoctorResults(results)
+			for _, r := range results {
+				if !r.OK {
+					os.Exit(1)
+				}
+			}
+		},
+	}
+
 	rootCmd.AddCommand(
 		buildProfileCmd(cm, git, appCfg),
 		buildWorktreeCmd(appCfg, git),
 		initCmd,
 		shellInitCmd,
+		doctorCmd,
 	)
 
 	if err := rootCmd.Execute(); err != nil {
