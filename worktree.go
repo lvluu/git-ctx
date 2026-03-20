@@ -14,6 +14,18 @@ func buildWorktreeCmd(appCfg AppConfig, git GitRunner) *cobra.Command {
 	worktreeCmd := &cobra.Command{
 		Use:   "worktree",
 		Short: "Manage git worktrees with file sync",
+		Long: `Manage git worktrees with file sync.
+
+File sync is configured via .git-ctx-sync.yaml in the repo root:
+
+  mode: symlink   # symlink (default) or copy
+  files:
+    - .env
+    - .vscode/settings.json
+
+- mode is optional; falls back to worktree.default_mode in ~/.git-ctx.yaml
+- files are relative to the repo root
+- add .git-ctx-sync.yaml to .gitignore (it is local-only)`,
 	}
 
 	// ── worktree ls ──────────────────────────────────────────────────────
