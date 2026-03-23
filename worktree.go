@@ -50,7 +50,9 @@ File sync is configured via .git-ctx-sync.yaml in the repo root:
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			wtPath := args[0]
-			gitArgs := []string{"worktree", "add", wtPath}
+			branchName := strings.TrimSuffix(filepath.Base(wtPath), "/")
+
+			gitArgs := []string{"worktree", "add", "-b", branchName, wtPath}
 			if len(args) == 2 {
 				gitArgs = append(gitArgs, args[1])
 			}
