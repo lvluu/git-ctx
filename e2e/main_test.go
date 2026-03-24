@@ -3,6 +3,7 @@ package e2e
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -20,7 +21,14 @@ func TestMain(m *testing.M) {
 }
 
 func rebuildBinary() error {
-	cmd := exec.Command("go", "build", "-o", "git-ctx-test", "./cmd/git-ctx")
-	cmd.Dir = "/home/lvluu/git-profile"
+	wd, _ := os.Getwd()
+	// Build from project root with explicit path to cmd/git-ctx
+	cmd := exec.Command("go", "build", "-o", filepath.Join(wd, "git-ctx-test"), "./cmd/git-ctx")
+	cmd.Dir = filepath.Join(wd, "..")
 	return cmd.Run()
+}
+
+func testBinaryPath() string {
+	wd, _ := os.Getwd()
+	return filepath.Join(wd, "git-ctx-test")
 }
