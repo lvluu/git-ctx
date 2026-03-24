@@ -24,6 +24,7 @@ var (
 	Date    = "unknown"
 )
 
+// ShellInitScript returns the shell hook snippet for auto-applying profiles.
 func ShellInitScript() string {
 	return `# git-ctx shell integration
 # Add to ~/.bashrc or ~/.zshrc:
@@ -50,6 +51,7 @@ fi
 `
 }
 
+// BuildProfileCmd constructs the profile subcommand with all its subcommands.
 func BuildProfileCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig) *cobra.Command {
 	profileCmd := &cobra.Command{
 		Use:   "profile",
@@ -235,17 +237,21 @@ func buildAutoCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig) *
 			}
 			res, err := resolver.Resolve()
 			if err != nil {
+				// Real errors should always be reported, even with --silent
+				fmt.Println("Auto apply failed:", err)
+				os.Exit(1)
+			}
+			// Silent mode only suppresses "no match" (empty profile key)
+			if res.ProfileKey == "" {
 				if autoSilent {
 					return
 				}
-				fmt.Println("Auto apply failed:", err)
+				fmt.Println("No profile found to apply.")
 				os.Exit(1)
 			}
 			p, ok := mgr.Profiles[res.ProfileKey]
 			if !ok {
-				if autoSilent {
-					return
-				}
+				// Profile key resolved but doesn't exist - report error
 				fmt.Printf("Auto apply failed: profile '%s' not found. Available profiles:\n", res.ProfileKey)
 				for k := range mgr.Profiles {
 					fmt.Printf("- %s\n", k)
@@ -461,16 +467,21 @@ func buildWorktreeSyncCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command 
 				fmt.Println("No additional worktrees found.")
 				return
 			}
+			hadFailure := false
 			for _, wt := range paths[1:] {
 				warnings, err := worktree.RunSync(appCfg, g, wt, syncCopy)
 				if err != nil {
 					fmt.Printf("Sync failed for %s: %v\n", wt, err)
+					hadFailure = true
 					continue
 				}
 				for _, w := range warnings {
 					fmt.Printf("Warning (%s): %s\n", wt, w)
 				}
 				fmt.Printf("Synced files to %s\n", wt)
+			}
+			if hadFailure {
+				os.Exit(1)
 			}
 		},
 	}

@@ -15,7 +15,8 @@ import (
 func main() {
 	cfg, err := config.Load(config.DefaultPath())
 	if err != nil {
-		log.Fatal("Failed to load config:", err)
+		log.Printf("Warning: failed to load config: %v\n", err)
+		// Use defaults - allow init/shell-init to work even with broken config
 	}
 	g := git.ExecRunner{}
 	mgr := profile.NewManager(cfg.ProfilesPath)

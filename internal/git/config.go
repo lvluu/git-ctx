@@ -57,6 +57,9 @@ func ConfigSet(git Runner, dir string, scopeFlag string, key, value string) erro
 // If force is false, it won't overwrite existing values.
 // Returns true if changes were made.
 func ApplyProfile(git Runner, dir string, scopeFlag string, name, email string, force bool) (changed bool, err error) {
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(email) == "" {
+		return false, fmt.Errorf("profile name and email must both be non-empty")
+	}
 	items := []struct {
 		key   string
 		value string

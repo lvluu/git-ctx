@@ -3,7 +3,6 @@ package profile
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 )
 
@@ -28,36 +27,41 @@ func NewManager(configPath string) *Manager {
 		ConfigPath: configPath,
 		Profiles:   make(map[string]Profile),
 	}
-	m.load()
+	if err := m.load(); err != nil {
+		// Log but continue with empty profiles - allows recovery
+		m.Profiles = make(map[string]Profile)
+	}
 	return m
 }
 
-func (m *Manager) load() {
+func (m *Manager) load() error {
 	if _, err := os.Stat(m.ConfigPath); os.IsNotExist(err) {
-		return
+		return nil
 	}
 	data, err := os.ReadFile(m.ConfigPath)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &m.Profiles); err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
+	return nil
 }
 
-func (m *Manager) save() {
+func (m *Manager) save() error {
 	data, err := json.MarshalIndent(m.Profiles, "", "  ")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if err := os.WriteFile(m.ConfigPath, data, 0644); err != nil {
-		log.Fatal(err)
+		return err
 	}
+	return nil
 }
 
 // Save persists the current profiles to disk.
-func (m *Manager) Save() {
-	m.save()
+func (m *Manager) Save() error {
+	return m.save()
 }

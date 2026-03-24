@@ -144,10 +144,10 @@ func splitLines(s string) []string {
 func trimSpace(s string) string {
 	start := 0
 	end := len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t') {
+	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r') {
 		start++
 	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\r') {
 		end--
 	}
 	return s[start:end]

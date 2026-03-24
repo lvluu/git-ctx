@@ -39,7 +39,7 @@ jobs:
   goreleaser:
     needs: [test, release-please]
     runs-on: ubuntu-latest
-    if: ${{ needs.release-please.outputs.releases_created == true }}
+    if: ${{ needs.release-please.outputs.releases_created == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
