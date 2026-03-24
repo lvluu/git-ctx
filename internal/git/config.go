@@ -53,10 +53,10 @@ func ConfigSet(git Runner, dir string, scopeFlag string, key, value string) erro
 	return git.Run(dir, args...)
 }
 
-// ApplyProfile applies a profile's name and email to git config in the specified scope.
+// ApplyProfile applies a profile's name, email, and signing key to git config in the specified scope.
 // If force is false, it won't overwrite existing values.
 // Returns true if changes were made.
-func ApplyProfile(git Runner, dir string, scopeFlag string, name, email string, force bool) (changed bool, err error) {
+func ApplyProfile(git Runner, dir string, scopeFlag string, name, email, signingKey string, force bool) (changed bool, err error) {
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(email) == "" {
 		return false, fmt.Errorf("profile name and email must both be non-empty")
 	}
@@ -83,6 +83,18 @@ func ApplyProfile(git Runner, dir string, scopeFlag string, name, email string, 
 		}
 		changed = true
 	}
+
+	// Handle signing key
+	if signingKey != "" {
+		if err := ConfigSet(git, dir, scopeFlag, "user.signingkey", signingKey); err != nil {
+			return changed, err
+		}
+		if err := ConfigSet(git, dir, scopeFlag, "commit.gpgsign", "true"); err != nil {
+			return changed, err
+		}
+		changed = true
+	}
+
 	return changed, nil
 }
 

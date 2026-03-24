@@ -24,30 +24,44 @@ func PromptProfileDetails(existing *profile.Profile) profile.Profile {
 	reader := bufio.NewReader(os.Stdin)
 	p := profile.Profile{}
 
-	if existing != nil && existing.Name != "" {
-		fmt.Printf("\nEnter name [current: %s, press Enter to keep]: ", existing.Name)
-	} else {
-		fmt.Print("Enter name: ")
-	}
-	name, _ := reader.ReadString('\n')
-	name = strings.TrimSpace(name)
-	if name == "" && existing != nil {
-		p.Name = existing.Name
-	} else {
-		p.Name = name
+	// Prompt for name with validation for new profiles
+	for {
+		if existing != nil && existing.Name != "" {
+			fmt.Printf("\nEnter name [current: %s, press Enter to keep]: ", existing.Name)
+		} else {
+			fmt.Print("Enter name: ")
+		}
+		name, _ := reader.ReadString('\n')
+		name = strings.TrimSpace(name)
+		if name == "" && existing != nil {
+			p.Name = existing.Name
+			break
+		}
+		if name != "" {
+			p.Name = name
+			break
+		}
+		fmt.Println("Name is required.")
 	}
 
-	if existing != nil && existing.Email != "" {
-		fmt.Printf("Enter email [current: %s, press Enter to keep]: ", existing.Email)
-	} else {
-		fmt.Print("Enter email: ")
-	}
-	email, _ := reader.ReadString('\n')
-	email = strings.TrimSpace(email)
-	if email == "" && existing != nil {
-		p.Email = existing.Email
-	} else {
-		p.Email = email
+	// Prompt for email with validation for new profiles
+	for {
+		if existing != nil && existing.Email != "" {
+			fmt.Printf("Enter email [current: %s, press Enter to keep]: ", existing.Email)
+		} else {
+			fmt.Print("Enter email: ")
+		}
+		email, _ := reader.ReadString('\n')
+		email = strings.TrimSpace(email)
+		if email == "" && existing != nil {
+			p.Email = existing.Email
+			break
+		}
+		if email != "" {
+			p.Email = email
+			break
+		}
+		fmt.Println("Email is required.")
 	}
 
 	fmt.Print("Enter signing key (optional, press Enter to skip): ")

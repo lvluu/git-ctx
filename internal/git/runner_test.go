@@ -109,7 +109,7 @@ func TestApplyProfile(t *testing.T) {
 				"config user.email": []byte("john@test.com"),
 			},
 		}
-		changed, err := ApplyProfile(r, "", "", "Jane Doe", "jane@test.com", true)
+		changed, err := ApplyProfile(r, "", "", "Jane Doe", "jane@test.com", "", true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

@@ -210,7 +210,7 @@ func buildApplyCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
 				return
 			}
 			p := mgr.Profiles[selected]
-			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, true); err != nil {
+			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, p.Signing.Key, true); err != nil {
 				fmt.Printf("Error applying profile: %v\n", err)
 				return
 			}
@@ -258,7 +258,7 @@ func buildAutoCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig) *
 				}
 				os.Exit(1)
 			}
-			changed, err := git.ApplyProfile(g, res.WorkDir, res.ScopeFlag, p.Name, p.Email, autoForce)
+			changed, err := git.ApplyProfile(g, res.WorkDir, res.ScopeFlag, p.Name, p.Email, p.Signing.Key, autoForce)
 			if err != nil {
 				fmt.Println("Auto apply failed:", err)
 				os.Exit(1)

@@ -50,7 +50,10 @@ func (r Resolver) Resolve() (ResolutionResult, error) {
 		}
 	}
 
-	homeRc := r.getHomeRCPath()
+	homeRc, err := r.getHomeRCPath()
+	if err != nil {
+		return ResolutionResult{}, err
+	}
 	if r.FileExists(homeRc) {
 		data, err := r.ReadFile(homeRc)
 		if err != nil {
@@ -90,9 +93,12 @@ func (r Resolver) Resolve() (ResolutionResult, error) {
 	return ResolutionResult{}, nil
 }
 
-func (r Resolver) getHomeRCPath() string {
-	homeDir, _ := r.GetHomeDir()
-	return homeDir + "/.gitprofilerc"
+func (r Resolver) getHomeRCPath() (string, error) {
+	homeDir, err := r.GetHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return homeDir + "/.gitprofilerc", nil
 }
 
 func (r Resolver) matchDirectoryRule(dir string) (string, bool) {
@@ -105,11 +111,18 @@ func (r Resolver) matchDirectoryRule(dir string) (string, bool) {
 }
 
 func matches(pattern, dir string) bool {
-	if pattern == "~" || pattern == "~/" {
+	// Match home directory exactly
+	if pattern == "~" {
+		return dir == "~" || dir == ""
+	}
+	if pattern == "~/" {
+		return len(dir) >= 2 && dir[:2] == "~/"
+	}
+	// Require path segment match: /work must match /work or /work/ but NOT /workspace
+	if dir == pattern {
 		return true
 	}
-	// Simple prefix matching for now
-	return len(dir) >= len(pattern) && dir[:len(pattern)] == pattern
+	return len(dir) > len(pattern) && dir[:len(pattern)] == pattern && dir[len(pattern)] == '/'
 }
 
 // ParseGitProfileRC parses a .gitprofilerc file content and returns the profile key.
