@@ -30,10 +30,18 @@ type DirectoryRule struct {
 	Profile string `yaml:"profile"`
 }
 
+// AppWorktreeHooks holds hook commands that run at various lifecycle points.
+type AppWorktreeHooks struct {
+	// PostCreate runs after a worktree is created (before files are synced).
+	PostCreate []string `yaml:"post_create"`
+}
+
 // AppWorktreeConfig holds worktree-related settings.
 type AppWorktreeConfig struct {
 	// DefaultMode is "symlink" (default) or "copy".
 	DefaultMode string `yaml:"default_mode"`
+	// Hooks are commands to run at various lifecycle points.
+	Hooks AppWorktreeHooks `yaml:"hooks"`
 }
 
 // MatchDirectoryRule finds the best-matching profile for dir using longest-prefix matching.
@@ -139,6 +147,11 @@ directory_rules:
 
 worktree:
   default_mode: symlink  # symlink | copy
+  # Hooks run after worktree creation:
+  # hooks:
+  #   post_create:
+  #     - bun install
+  #     - npm run setup
 `, filepath.Join(homeDir, ".git-ctx-profiles.json"))
 
 	return os.WriteFile(cfgPath, []byte(scaffold), 0644)
