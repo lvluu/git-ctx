@@ -9,12 +9,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// SyncHooks holds hook commands for worktree lifecycle events.
+type SyncHooks struct {
+	PostCreate []string `yaml:"post_create"`
+}
+
 // SyncConfig is the per-repo worktree sync configuration from .git-ctx-sync.yaml.
 type SyncConfig struct {
 	// Mode is "symlink" (default) or "copy".
 	Mode string `yaml:"mode"`
 	// Files lists paths relative to the repo root to sync into each worktree.
 	Files []string `yaml:"files"`
+	// Hooks are commands to run after worktree creation.
+	Hooks SyncHooks `yaml:"hooks"`
 }
 
 // loadSyncConfig reads .git-ctx-sync.yaml from cfgPath.

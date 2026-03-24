@@ -22,10 +22,14 @@ File sync is configured via .git-ctx-sync.yaml in the repo root:
   files:
     - .env
     - .vscode/settings.json
+  hooks:
+    post_create:
+      - bun install
 
 - mode is optional; falls back to worktree.default_mode in ~/.git-ctx.yaml
 - files are relative to the repo root
-- add .git-ctx-sync.yaml to .gitignore (it is local-only)`,
+- hooks run after worktree creation (global hooks from ~/.git-ctx.yaml run first)
+- .git-ctx-sync.yaml is local-only (add to .gitignore)`,
 	}
 
 	// ── worktree ls ──────────────────────────────────────────────────────
@@ -43,7 +47,7 @@ File sync is configured via .git-ctx-sync.yaml in the repo root:
 	}
 
 	// ── worktree add ─────────────────────────────────────────────────────
-	var addCopy bool
+	var addCopy, noHooks bool
 	addCmd := &cobra.Command{
 		Use:   "add <path> [<commit-ish>]",
 		Short: "Add a worktree and sync configured files into it",
@@ -68,18 +72,48 @@ File sync is configured via .git-ctx-sync.yaml in the repo root:
 				os.Exit(1)
 			}
 
-			warnings, err := runSync(appCfg, git, absWTPath, addCopy)
+			repoRoot, inRepo, err := findRepoRoot(git)
 			if err != nil {
-				fmt.Println("Sync failed:", err)
+				fmt.Println("Error finding repo root:", err)
 				os.Exit(1)
 			}
-			for _, w := range warnings {
-				fmt.Println("Warning:", w)
+			if !inRepo {
+				fmt.Println("Error: not inside a git repository")
+				os.Exit(1)
 			}
+
+			syncCfgPath := filepath.Join(repoRoot, ".git-ctx-sync.yaml")
+			syncCfg, err := loadSyncConfig(syncCfgPath, appCfg.Worktree.DefaultMode)
+			if err != nil {
+				fmt.Println("Error loading sync config:", err)
+				os.Exit(1)
+			}
+
+			if len(syncCfg.Files) > 0 {
+				warnings, err := syncFiles(syncCfg, repoRoot, absWTPath, addCopy)
+				if err != nil {
+					fmt.Println("Sync failed:", err)
+					os.Exit(1)
+				}
+				for _, w := range warnings {
+					fmt.Println("Warning:", w)
+				}
+			}
+
+			if !noHooks {
+				runner := &ExecHookRunner{Stdout: os.Stdout, Stderr: os.Stderr}
+				allHooks := append(appCfg.Worktree.Hooks.PostCreate, syncCfg.Hooks.PostCreate...)
+				if err := runHooks(runner, allHooks, absWTPath, branchName, repoRoot); err != nil {
+					fmt.Println("Hook failed:", err)
+					os.Exit(1)
+				}
+			}
+
 			fmt.Printf("Worktree created at %s\n", absWTPath)
 		},
 	}
 	addCmd.Flags().BoolVar(&addCopy, "copy", false, "Copy files instead of symlinking")
+	addCmd.Flags().BoolVar(&noHooks, "no-hooks", false, "Skip post-create hooks")
 
 	// ── worktree sync ─────────────────────────────────────────────────────
 	var syncCopy bool
