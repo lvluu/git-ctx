@@ -20,7 +20,7 @@ func TestMain(m *testing.M) {
 }
 
 func rebuildBinary() error {
-	cmd := exec.Command("go", "build", "-o", "git-ctx-test", ".")
+	cmd := exec.Command("go", "build", "-o", "git-ctx-test", "./cmd/git-ctx")
 	cmd.Dir = "/home/lvluu/git-profile"
 	return cmd.Run()
 }

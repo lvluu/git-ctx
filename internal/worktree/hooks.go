@@ -1,4 +1,4 @@
-package main
+package worktree
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"os/exec"
 )
 
-// HookRunner executes hook commands. Interface allows testing with fake runners.
+// HookRunner executes hook commands.
 type HookRunner interface {
 	Run(hook, worktreePath string, env map[string]string) error
 }
@@ -36,8 +36,8 @@ func (r *ExecHookRunner) Run(hook, worktreePath string, env map[string]string) e
 	return nil
 }
 
-// runHooks executes a list of hooks sequentially. Stops on first failure.
-func runHooks(runner HookRunner, hooks []string, worktreePath, branch, repoRoot string) error {
+// RunHooks executes a list of hooks sequentially. Stops on first failure.
+func RunHooks(runner HookRunner, hooks []string, worktreePath, branch, repoRoot string) error {
 	env := map[string]string{
 		"GIT_CTX_WORKTREE_PATH":   worktreePath,
 		"GIT_CTX_WORKTREE_BRANCH": branch,

@@ -1,6 +1,9 @@
-
 dist/
 main
 *.exe
 .worktrees/
 .git-ctx-sync.yaml
+.git/
+.omc/
+.serena/
+git-ctx-test
