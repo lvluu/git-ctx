@@ -1,33 +1,32 @@
-package main
+// Package worktree handles git worktree operations.
+package worktree
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/lvluu/git-ctx/internal/config"
+	"github.com/lvluu/git-ctx/internal/git"
 	"gopkg.in/yaml.v3"
 )
 
-// SyncHooks holds hook commands for worktree lifecycle events.
-type SyncHooks struct {
+// Hooks holds hook commands for worktree lifecycle events.
+type Hooks struct {
 	PostCreate []string `yaml:"post_create"`
 }
 
 // SyncConfig is the per-repo worktree sync configuration from .git-ctx-sync.yaml.
 type SyncConfig struct {
-	// Mode is "symlink" (default) or "copy".
-	Mode string `yaml:"mode"`
-	// Files lists paths relative to the repo root to sync into each worktree.
+	Mode  string   `yaml:"mode"`
 	Files []string `yaml:"files"`
-	// Hooks are commands to run after worktree creation.
-	Hooks SyncHooks `yaml:"hooks"`
+	Hooks Hooks    `yaml:"hooks"`
 }
 
-// loadSyncConfig reads .git-ctx-sync.yaml from cfgPath.
+// LoadSyncConfig reads .git-ctx-sync.yaml from cfgPath.
 // If the file does not exist, an empty config with defaultMode is returned.
-// defaultMode comes from AppConfig.Worktree.DefaultMode.
-func loadSyncConfig(cfgPath string, defaultMode string) (SyncConfig, error) {
+func LoadSyncConfig(cfgPath string, defaultMode string) (SyncConfig, error) {
 	cfg := SyncConfig{Mode: defaultMode}
 
 	data, err := os.ReadFile(cfgPath)
@@ -49,10 +48,9 @@ func loadSyncConfig(cfgPath string, defaultMode string) (SyncConfig, error) {
 	return cfg, nil
 }
 
-// syncFiles creates symlinks or copies for each file in cfg.Files from srcRoot to dstRoot.
-// copyOverride=true forces copy regardless of cfg.Mode (for the --copy flag).
-// Returns a list of warning strings for files that don't exist in srcRoot (not fatal).
-func syncFiles(cfg SyncConfig, srcRoot, dstRoot string, copyOverride bool) (warnings []string, err error) {
+// SyncFiles creates symlinks or copies for each file in cfg.Files from srcRoot to dstRoot.
+// copyOverride=true forces copy regardless of cfg.Mode.
+func SyncFiles(cfg SyncConfig, srcRoot, dstRoot string, copyOverride bool) (warnings []string, err error) {
 	useCopy := copyOverride || cfg.Mode == "copy"
 
 	for _, rel := range cfg.Files {
@@ -64,7 +62,6 @@ func syncFiles(cfg SyncConfig, srcRoot, dstRoot string, copyOverride bool) (warn
 			continue
 		}
 
-		// Ensure parent directory exists in destination.
 		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 			return warnings, fmt.Errorf("creating parent dir for %s: %w", rel, err)
 		}
@@ -90,6 +87,45 @@ func syncFiles(cfg SyncConfig, srcRoot, dstRoot string, copyOverride bool) (warn
 	return warnings, nil
 }
 
+// ListWorktreePaths returns absolute paths of all worktrees.
+func ListWorktreePaths(g git.Runner) ([]string, error) {
+	out, err := g.Output("", "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+
+	var paths []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			paths = append(paths, strings.TrimPrefix(line, "worktree "))
+		}
+	}
+	return paths, nil
+}
+
+// RunSync loads .git-ctx-sync.yaml from the repo root and syncs files to dstWorktree.
+func RunSync(appCfg config.AppConfig, g git.Runner, dstWorktree string, copyOverride bool) ([]string, error) {
+	repoRoot, inRepo, err := git.FindRepoRoot(g)
+	if err != nil {
+		return nil, err
+	}
+	if !inRepo {
+		return nil, fmt.Errorf("not inside a git repository")
+	}
+
+	syncCfgPath := filepath.Join(repoRoot, ".git-ctx-sync.yaml")
+	cfg, err := LoadSyncConfig(syncCfgPath, appCfg.Worktree.DefaultMode)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(cfg.Files) == 0 {
+		return nil, nil
+	}
+
+	return SyncFiles(cfg, repoRoot, dstWorktree, copyOverride)
+}
+
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -108,6 +144,6 @@ func copyFile(src, dst string) error {
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, in)
+	_, err = out.ReadFrom(in)
 	return err
 }

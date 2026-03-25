@@ -1,8 +1,10 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -20,7 +22,20 @@ func TestMain(m *testing.M) {
 }
 
 func rebuildBinary() error {
-	cmd := exec.Command("go", "build", "-o", "git-ctx-test", ".")
-	cmd.Dir = "/home/lvluu/git-profile"
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+	// Build from project root with explicit path to cmd/git-ctx
+	cmd := exec.Command("go", "build", "-o", filepath.Join(wd, "git-ctx-test"), "./cmd/git-ctx")
+	cmd.Dir = filepath.Join(wd, "..")
 	return cmd.Run()
+}
+
+func testBinaryPath() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		panic("failed to get working directory: " + err.Error())
+	}
+	return filepath.Join(wd, "git-ctx-test")
 }

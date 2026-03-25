@@ -50,7 +50,7 @@ hooks:
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".git-ctx-sync.yaml"), []byte(syncCfg), 0644))
 
 	worktreePath := filepath.Join(filepath.Dir(repo), "test-wt-hook")
-	cmd := exec.Command(filepath.Join("/home/lvluu/git-profile", "git-ctx-test"), "worktree", "add", worktreePath)
+	cmd := exec.Command(testBinaryPath(), "worktree", "add", worktreePath)
 	cmd.Dir = repo
 	out, err := cmd.CombinedOutput()
 	t.Logf("Output: %s", string(out))
@@ -74,7 +74,7 @@ hooks:
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".git-ctx-sync.yaml"), []byte(syncCfg), 0644))
 
 	worktreePath := filepath.Join(filepath.Dir(repo), "test-wt-both")
-	cmd := exec.Command(filepath.Join("/home/lvluu/git-profile", "git-ctx-test"), "worktree", "add", worktreePath)
+	cmd := exec.Command(testBinaryPath(), "worktree", "add", worktreePath)
 	cmd.Dir = repo
 	cmd.Env = append(os.Environ(), "GIT_CTX_WORKTREE_HOOKS=echo 'GLOBAL_HOOK'")
 	out, err := cmd.CombinedOutput()
@@ -96,7 +96,7 @@ hooks:
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".git-ctx-sync.yaml"), []byte(syncCfg), 0644))
 
 	worktreePath := filepath.Join(filepath.Dir(repo), "test-wt-no-hooks")
-	cmd := exec.Command(filepath.Join("/home/lvluu/git-profile", "git-ctx-test"), "worktree", "add", worktreePath, "--no-hooks")
+	cmd := exec.Command(testBinaryPath(), "worktree", "add", worktreePath, "--no-hooks")
 	cmd.Dir = repo
 	out, err := cmd.CombinedOutput()
 	t.Logf("Output: %s", string(out))
@@ -120,7 +120,7 @@ hooks:
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".git-ctx-sync.yaml"), []byte(syncCfg), 0644))
 
 	worktreePath := filepath.Join(filepath.Dir(repo), "test-wt-fail")
-	cmd := exec.Command(filepath.Join("/home/lvluu/git-profile", "git-ctx-test"), "worktree", "add", worktreePath)
+	cmd := exec.Command(testBinaryPath(), "worktree", "add", worktreePath)
 	cmd.Dir = repo
 	out, err := cmd.CombinedOutput()
 	t.Logf("Output: %s", string(out))
@@ -144,7 +144,7 @@ hooks:
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".git-ctx-sync.yaml"), []byte(syncCfg), 0644))
 
 	worktreePath := filepath.Join(filepath.Dir(repo), "test-wt-env")
-	cmd := exec.Command(filepath.Join("/home/lvluu/git-profile", "git-ctx-test"), "worktree", "add", worktreePath)
+	cmd := exec.Command(testBinaryPath(), "worktree", "add", worktreePath)
 	cmd.Dir = repo
 	out, err := cmd.CombinedOutput()
 	t.Logf("Output: %s", string(out))
