@@ -85,15 +85,24 @@ func buildListCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
 				return
 			}
 			for name, p := range mgr.Profiles {
+				raw := p
+				resolved := p
+				if p.Extends != "" {
+					resolved, _, _ = mgr.Get(name)
+				}
 				activeMarker := ""
-				if p.Name == activeName && p.Email == activeEmail {
+				if resolved.Name == activeName && resolved.Email == activeEmail {
 					activeMarker = " (active)"
 				}
-				fmt.Printf("💻 Profile: %s%s\n", name, activeMarker)
-				fmt.Printf("  🖖 Name:  %s\n", p.Name)
-				fmt.Printf("  📧 Email: %s\n", p.Email)
-				if p.Signing.Key != "" {
-					fmt.Printf("  🔑 Signing Key: %s\n", p.Signing.Key)
+				extendsMarker := ""
+				if raw.Extends != "" {
+					extendsMarker = fmt.Sprintf(" (extends: %s)", raw.Extends)
+				}
+				fmt.Printf("💻 Profile: %s%s%s\n", name, activeMarker, extendsMarker)
+				fmt.Printf("  🖖 Name:  %s\n", resolved.Name)
+				fmt.Printf("  📧 Email: %s\n", resolved.Email)
+				if resolved.Signing.Key != "" {
+					fmt.Printf("  🔑 Signing Key: %s\n", resolved.Signing.Key)
 				}
 				fmt.Println()
 			}
@@ -102,7 +111,9 @@ func buildListCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
 }
 
 func buildAddCmd(mgr *profile.Manager) *cobra.Command {
-	return &cobra.Command{
+	var extendsTemplate string
+
+	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Add a new Git profile (interactive)",
 		Run: func(cmd *cobra.Command, args []string) {
@@ -124,11 +135,14 @@ func buildAddCmd(mgr *profile.Manager) *cobra.Command {
 				return
 			}
 			p := ui.PromptProfileDetails(nil)
+			p.Extends = extendsTemplate
 			mgr.Profiles[profileName] = p
 			mgr.Save()
 			fmt.Printf("Profile '%s' added successfully!\n", profileName)
 		},
 	}
+	cmd.Flags().StringVar(&extendsTemplate, "extends", "", "Template name to extend")
+	return cmd
 }
 
 func buildEditCmd(mgr *profile.Manager) *cobra.Command {
@@ -209,7 +223,15 @@ func buildApplyCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
 				fmt.Println("Cancelled.")
 				return
 			}
-			p := mgr.Profiles[selected]
+			p, ok, err := mgr.Get(selected)
+			if err != nil {
+				fmt.Printf("Error applying profile: %v\n", err)
+				return
+			}
+			if !ok {
+				fmt.Printf("Profile '%s' not found.\n", selected)
+				return
+			}
 			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, p.Signing.Key, true); err != nil {
 				fmt.Printf("Error applying profile: %v\n", err)
 				return
@@ -249,7 +271,11 @@ func buildAutoCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig) *
 				fmt.Println("No profile found to apply.")
 				os.Exit(1)
 			}
-			p, ok := mgr.Profiles[res.ProfileKey]
+			p, ok, err := mgr.Get(res.ProfileKey)
+			if err != nil {
+				fmt.Printf("Auto apply failed: %v\n", err)
+				os.Exit(1)
+			}
 			if !ok {
 				// Profile key resolved but doesn't exist - report error
 				fmt.Printf("Auto apply failed: profile '%s' not found. Available profiles:\n", res.ProfileKey)
