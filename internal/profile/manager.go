@@ -8,7 +8,7 @@ import (
 )
 
 // Profile represents a Git profile with name, email, optional signing key,
-// and optional template inheritance.
+// optional template inheritance, and optional last-used timestamp.
 type Profile struct {
 	Name    string `json:"name"`
 	Email   string `json:"email"`
@@ -16,6 +16,9 @@ type Profile struct {
 	Signing struct {
 		Key string `json:"key,omitempty"`
 	} `json:"signing,omitempty"`
+	// LastUsed records when this profile was last applied.
+	// Empty if never applied.
+	LastUsed string `json:"lastUsed,omitempty"`
 }
 
 // Templates is a map of template name -> Profile.

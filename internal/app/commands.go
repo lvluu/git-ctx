@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/lvluu/git-ctx/internal/config"
 	"github.com/lvluu/git-ctx/internal/git"
@@ -71,23 +73,38 @@ func BuildProfileCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig
 }
 
 func buildListCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
-	return &cobra.Command{
+	var verbose, jsonOut bool
+
+	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List all saved Git profiles",
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(mgr.Profiles) == 0 {
-				fmt.Println("No profiles found. Use 'git ctx profile add' to create a profile.")
+				if jsonOut {
+					fmt.Println("[]")
+				} else {
+					fmt.Println("No profiles found. Use 'git ctx profile add' to create a profile.")
+				}
 				return
 			}
-			activeName, activeEmail, err := git.GetActiveProfile(g)
-			if err != nil {
-				fmt.Println("Error retrieving active profile:", err)
+
+			activeName, activeEmail, _ := git.GetActiveProfile(g)
+
+			if jsonOut {
+				printProfilesJSON(mgr, activeName, activeEmail)
 				return
 			}
+
+			if verbose {
+				printProfilesVerbose(mgr, activeName, activeEmail)
+				return
+			}
+
+			// Default: compact list.
 			for name, p := range mgr.Profiles {
 				raw := p
 				resolved := p
-				if p.Extends != "" {
+				if raw.Extends != "" {
 					resolved, _, _ = mgr.Get(name)
 				}
 				activeMarker := ""
@@ -108,6 +125,180 @@ func buildListCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
 			}
 		},
 	}
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed table with metadata")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output profiles as JSON")
+	return cmd
+}
+
+// ProfileRow holds the data for one verbose table row.
+type ProfileRow struct {
+	Name       string `json:"name"`
+	Email      string `json:"email"`
+	SigningKey string `json:"signingKey,omitempty"`
+	Template   string `json:"template,omitempty"`
+	LastUsed   string `json:"lastUsed,omitempty"`
+	Active     bool   `json:"active"`
+}
+
+func printProfilesVerbose(mgr *profile.Manager, activeName, activeEmail string) {
+	// Collect and sort profile names for stable output.
+	var names []string
+	for name := range mgr.Profiles {
+		names = append(names, name)
+	}
+
+	// Column widths (pre-computed for consistent padding).
+	const (
+		colNAME       = "NAME"
+		colEMAIL      = "EMAIL"
+		colSIGNINGKEY = "SIGNING KEY"
+		colTEMPLATE   = "TEMPLATE"
+		colACTIVE     = "ACTIVE"
+		colLASTUSED   = "LAST USED"
+	)
+
+	// We need the effective widths based on content.
+	type row struct{ name, email, key, tmpl, active, lastUsed string }
+	rows := make([]row, 0, len(names))
+
+	maxName, maxEmail, maxKey, maxTmpl := len(colNAME), len(colEMAIL), len(colSIGNINGKEY), len(colTEMPLATE)
+
+	for _, name := range names {
+		p, _, _ := mgr.Get(name)
+		raw, _ := mgr.GetRaw(name)
+		active := p.Name == activeName && p.Email == activeEmail
+		activeStr := "-"
+		if active {
+			activeStr = "*"
+		}
+		lastUsed := raw.LastUsed
+		if lastUsed == "" {
+			lastUsed = "-"
+		}
+		tmplStr := "-"
+		if raw.Extends != "" {
+			tmplStr = raw.Extends
+		}
+		keyStr := "-"
+		if p.Signing.Key != "" {
+			keyStr = p.Signing.Key
+		}
+		rows = append(rows, row{
+			name:     name,
+			email:    p.Email,
+			key:      keyStr,
+			tmpl:     tmplStr,
+			active:   activeStr,
+			lastUsed: lastUsed,
+		})
+		if l := len(name); l > maxName {
+			maxName = l
+		}
+		if l := len(p.Email); l > maxEmail {
+			maxEmail = l
+		}
+		if l := len(keyStr); l > maxKey {
+			maxKey = l
+		}
+		if l := len(tmplStr); l > maxTmpl {
+			maxTmpl = l
+		}
+	}
+
+	pad := func(s string, width int) string {
+		return s + spaces(max(0, width-len(s)))
+	}
+	sep := func() {
+		fmt.Print("  ")
+	}
+
+	// Header.
+	fmt.Print(pad("", 2))
+	sep()
+	fmt.Print(pad(colNAME, maxName))
+	sep()
+	fmt.Print(pad(colEMAIL, maxEmail))
+	sep()
+	fmt.Print(pad(colSIGNINGKEY, maxKey))
+	sep()
+	fmt.Print(pad(colTEMPLATE, maxTmpl))
+	sep()
+	fmt.Print(colACTIVE)
+	sep()
+	fmt.Println(colLASTUSED)
+
+	// Divider.
+	fmt.Print(pad("", 2))
+	sep()
+	fmt.Print(pad("", maxName))
+	sep()
+	fmt.Print(pad("", maxEmail))
+	sep()
+	fmt.Print(pad("", maxKey))
+	sep()
+	fmt.Print(pad("", maxTmpl))
+	sep()
+	fmt.Print(pad("", len(colACTIVE)))
+	sep()
+	fmt.Println(strings.Repeat("-", len(colLASTUSED)))
+
+	// Rows.
+	for _, r := range rows {
+		prefix := "  "
+		fmt.Print(prefix)
+		sep()
+		fmt.Print(pad(r.name, maxName))
+		sep()
+		fmt.Print(pad(r.email, maxEmail))
+		sep()
+		fmt.Print(pad(r.key, maxKey))
+		sep()
+		fmt.Print(pad(r.tmpl, maxTmpl))
+		sep()
+		fmt.Print(pad(r.active, len(colACTIVE)))
+		sep()
+		fmt.Println(r.lastUsed)
+	}
+}
+
+func spaces(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.Repeat(" ", n)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func printProfilesJSON(mgr *profile.Manager, activeName, activeEmail string) {
+	var rows []ProfileRow
+	for name := range mgr.Profiles {
+		p, _, _ := mgr.Get(name)
+		raw, _ := mgr.GetRaw(name)
+		active := p.Name == activeName && p.Email == activeEmail
+		r := ProfileRow{
+			Name:       name,
+			Email:      p.Email,
+			SigningKey: p.Signing.Key,
+			Active:     active,
+		}
+		if raw.Extends != "" {
+			r.Template = raw.Extends
+		}
+		if raw.LastUsed != "" {
+			r.LastUsed = raw.LastUsed
+		}
+		rows = append(rows, r)
+	}
+	// Sort by name for stable output.
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	data, _ := json.MarshalIndent(rows, "", "  ")
+	fmt.Println(string(data))
 }
 
 func buildAddCmd(mgr *profile.Manager) *cobra.Command {
