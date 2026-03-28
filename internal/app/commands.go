@@ -3,6 +3,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -897,10 +898,13 @@ func buildWorktreeSyncCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command 
 	return cmd
 }
 
+// buildWorktreePushCmd pushes configured files from the repo root into a worktree.
 func buildWorktreePushCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
+	var pushCopy bool
+
 	cmd := &cobra.Command{
-		Use:   "push [path]",
-		Short: "Push synced files from primary repo to a worktree",
+		Use:   "push <worktree-path>",
+		Short: "Push files from the primary worktree into a worktree",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			absPath, err := filepath.Abs(args[0])
@@ -908,7 +912,7 @@ func buildWorktreePushCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command 
 				fmt.Println("Error resolving path:", err)
 				os.Exit(1)
 			}
-			warnings, err := worktree.PushFiles(appCfg, g, absPath)
+			warnings, err := worktree.RunSyncPush(appCfg, g, absPath, pushCopy)
 			if err != nil {
 				fmt.Println("Push failed:", err)
 				os.Exit(1)
@@ -919,13 +923,17 @@ func buildWorktreePushCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command 
 			fmt.Printf("Pushed files to %s\n", absPath)
 		},
 	}
+	cmd.Flags().BoolVar(&pushCopy, "copy", false, "Copy files instead of symlinking")
 	return cmd
 }
 
+// buildWorktreePullCmd pulls configured files from a worktree back to the primary.
 func buildWorktreePullCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
+	var pullCopy bool
+
 	cmd := &cobra.Command{
-		Use:   "pull [path]",
-		Short: "Pull synced files from a worktree back to the primary repo",
+		Use:   "pull <worktree-path>",
+		Short: "Pull files from a worktree into the primary worktree",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			absPath, err := filepath.Abs(args[0])
@@ -933,9 +941,14 @@ func buildWorktreePullCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command 
 				fmt.Println("Error resolving path:", err)
 				os.Exit(1)
 			}
-			warnings, err := worktree.PullFiles(appCfg, g, absPath)
+			warnings, err := worktree.RunSyncPull(appCfg, g, absPath, pullCopy)
 			if err != nil {
-				fmt.Println("Pull failed:", err)
+				var conflictErr *worktree.ConflictError
+				if errors.As(err, &conflictErr) {
+					fmt.Println("Pull aborted due to conflict:", conflictErr.Error())
+				} else {
+					fmt.Println("Pull failed:", err)
+				}
 				os.Exit(1)
 			}
 			for _, w := range warnings {
@@ -944,28 +957,64 @@ func buildWorktreePullCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command 
 			fmt.Printf("Pulled files from %s\n", absPath)
 		},
 	}
+	cmd.Flags().BoolVar(&pullCopy, "copy", false, "Copy files instead of symlinking")
 	return cmd
 }
 
+// buildWorktreeWatchCmd starts a watch loop that continuously syncs files.
 func buildWorktreeWatchCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
+	var watchCopy bool
+
 	cmd := &cobra.Command{
-		Use:   "watch [path]",
-		Short: "Watch a worktree for file changes and auto-sync to primary repo",
-		Args:  cobra.ExactArgs(1),
+		Use:   "watch [worktree-path]",
+		Short: "Watch and continuously sync files between worktrees",
+		Args:  cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			absPath, err := filepath.Abs(args[0])
-			if err != nil {
-				fmt.Println("Error resolving path:", err)
+			repoRoot, inRepo, err := git.FindRepoRoot(g)
+			if err != nil || !inRepo {
+				fmt.Println("Error: not inside a git repository")
 				os.Exit(1)
 			}
-			if err := worktree.WatchFiles(appCfg, g, absPath); err != nil {
-				fmt.Println("Watch failed:", err)
-				os.Exit(1)
+
+			var dstRoot string
+			if len(args) == 1 {
+				dstRoot, _ = filepath.Abs(args[0])
+			} else {
+				paths, err := worktree.ListWorktreePaths(g)
+				if err != nil || len(paths) <= 1 {
+					fmt.Println("No additional worktrees found.")
+					os.Exit(0)
+				}
+				dstRoot = paths[1] // sync to the first non-primary worktree
 			}
+
+			syncCfg, err := worktree.LoadSyncConfig(filepath.Join(repoRoot, ".git-ctx-sync.yaml"), appCfg.Worktree.DefaultMode)
+			if err != nil || len(syncCfg.Files) == 0 {
+				fmt.Println("No sync files configured in .git-ctx-sync.yaml")
+				os.Exit(0)
+			}
+
+			fmt.Printf("Watching %s for changes (debounce: %v)\n",
+				strings.Join(syncCfg.Files, ", "), worktree.DefaultWatchConfig.Debounce)
+			fmt.Printf("Syncing to: %s\n", dstRoot)
+
+			worktree.WatchLoop(syncCfg, repoRoot, dstRoot, watchCopy, worktree.DefaultWatchConfig,
+				func(warnings []string) {
+					for _, w := range warnings {
+						fmt.Println("Warning:", w)
+					}
+					fmt.Println("Synced")
+				},
+				func(err error) {
+					fmt.Println("Watch error:", err)
+				},
+			)
 		},
 	}
+	cmd.Flags().BoolVar(&watchCopy, "copy", false, "Copy files instead of symlinking")
 	return cmd
 }
+
 
 // BuildWorktreeCmd builds the worktree command group.
 func BuildWorktreeCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
