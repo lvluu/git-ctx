@@ -256,6 +256,7 @@ func buildAutoCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig) *
 				FileExists:     func(path string) bool { _, err := os.Stat(path); return err == nil },
 				DirectoryRules: convertDirRules(appCfg.DirectoryRules),
 				GetCurrentDir:  os.Getwd,
+				GitRunner:     g,
 			}
 			res, err := resolver.Resolve()
 			if err != nil {
