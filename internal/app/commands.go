@@ -208,39 +208,82 @@ func buildRemoveCmd(mgr *profile.Manager) *cobra.Command {
 }
 
 func buildApplyCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
-	return &cobra.Command{
-		Use:   "apply",
-		Short: "Apply a specific Git profile (interactive)",
+	var applyDryRun, applyDiff, applyQuiet bool
+
+	cmd := &cobra.Command{
+		Use:   "apply [profile-name]",
+		Short: "Apply a specific Git profile",
+		Args:  cobra.RangeArgs(0, 1),
 		Run: func(cmd *cobra.Command, args []string) {
-			var names []string
-			for name := range mgr.Profiles {
-				names = append(names, name)
+			var selected string
+			if len(args) == 1 {
+				selected = args[0]
+			} else {
+				var names []string
+				for name := range mgr.Profiles {
+					names = append(names, name)
+				}
+				prompt := promptui.Select{
+					Label: "Select profile to apply",
+					Items: names,
+				}
+				_, s, err := prompt.Run()
+				if err != nil {
+					fmt.Println("Cancelled.")
+					return
+				}
+				selected = s
 			}
-			prompt := promptui.Select{
-				Label: "Select profile to apply",
-				Items: names,
-			}
-			_, selected, err := prompt.Run()
-			if err != nil {
-				fmt.Println("Cancelled.")
-				return
-			}
+
 			p, ok, err := mgr.Get(selected)
 			if err != nil {
-				fmt.Printf("Error applying profile: %v\n", err)
+				fmt.Printf("Error: %v\n", err)
 				return
 			}
 			if !ok {
 				fmt.Printf("Profile '%s' not found.\n", selected)
 				return
 			}
-			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, p.Signing.Key, true); err != nil {
-				fmt.Printf("Error applying profile: %v\n", err)
+
+			// Dry-run / diff mode: no config changes
+			if applyDryRun || applyDiff {
+				diffs, err := git.DiffProfile(g, "", "", p.Name, p.Email, p.Signing.Key)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					return
+				}
+				if len(diffs) == 0 {
+					if !applyQuiet {
+						fmt.Println("[DRY RUN] No changes needed; user.name/user.email already match.")
+					}
+					return
+				}
+				if applyDryRun {
+					if !applyQuiet {
+						fmt.Print(git.FormatDryRun(diffs))
+						fmt.Println()
+					}
+				} else {
+					fmt.Print(git.FormatDiff(diffs))
+					fmt.Println()
+				}
 				return
 			}
-			fmt.Printf("Profile '%s' applied successfully!\n", selected)
+
+			// Real apply
+			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, p.Signing.Key, true); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return
+			}
+			if !applyQuiet {
+				fmt.Printf("Profile '%s' applied successfully!\n", selected)
+			}
 		},
 	}
+	cmd.Flags().BoolVar(&applyDryRun, "dry-run", false, "Show what would be changed; don't modify config")
+	cmd.Flags().BoolVar(&applyDiff, "diff", false, "Show changes as a git-style diff; don't modify config")
+	cmd.Flags().BoolVar(&applyQuiet, "quiet", false, "Suppress output")
+	return cmd
 }
 
 func buildSwitchCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
