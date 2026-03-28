@@ -39,6 +39,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.yaml
           release-type: go
+          skip-creating-pull-request: true
 
   goreleaser:
     needs: [test, release-please]
