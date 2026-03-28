@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     outputs:
       releases_created: ${{ steps.release-please.outputs.releases_created }}
     steps:
@@ -44,6 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     if: ${{ needs.release-please.outputs.releases_created == 'true' }}
     steps:
       - name: Checkout
