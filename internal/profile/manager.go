@@ -7,8 +7,14 @@ import (
 	"os"
 )
 
+// GPGConfig holds GPG key management settings for a profile.
+type GPGConfig struct {
+	Keyfile          string `json:"keyfile,omitempty"`
+	ImportOnActivate bool   `json:"importOnActivate"`
+}
+
 // Profile represents a Git profile with name, email, optional signing key,
-// optional template inheritance, and optional last-used timestamp.
+// optional GPG key management, and optional template inheritance.
 type Profile struct {
 	Name    string `json:"name"`
 	Email   string `json:"email"`
@@ -16,9 +22,8 @@ type Profile struct {
 	Signing struct {
 		Key string `json:"key,omitempty"`
 	} `json:"signing,omitempty"`
-	// LastUsed records when this profile was last applied.
-	// Empty if never applied.
-	LastUsed string `json:"lastUsed,omitempty"`
+	GPG       GPGConfig `json:"gpg,omitempty"`
+	LastUsed  string    `json:"lastUsed,omitempty"`
 }
 
 // Templates is a map of template name -> Profile.
@@ -93,6 +98,12 @@ func mergeProfile(dst *Profile, src Profile) {
 	}
 	if src.Signing.Key != "" {
 		dst.Signing.Key = src.Signing.Key
+	}
+	if src.GPG.Keyfile != "" {
+		dst.GPG.Keyfile = src.GPG.Keyfile
+	}
+	if src.GPG.ImportOnActivate {
+		dst.GPG.ImportOnActivate = src.GPG.ImportOnActivate
 	}
 }
 
