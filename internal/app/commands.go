@@ -63,6 +63,7 @@ func BuildProfileCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig
 	profileCmd.AddCommand(buildEditCmd(mgr))
 	profileCmd.AddCommand(buildRemoveCmd(mgr))
 	profileCmd.AddCommand(buildApplyCmd(mgr, g))
+	profileCmd.AddCommand(buildSwitchCmd(mgr, g))
 	profileCmd.AddCommand(buildAutoCmd(mgr, g, appCfg))
 	profileCmd.AddCommand(buildExportCmd(mgr))
 	profileCmd.AddCommand(buildImportCmd(mgr))
@@ -238,6 +239,74 @@ func buildApplyCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
 				return
 			}
 			fmt.Printf("Profile '%s' applied successfully!\n", selected)
+		},
+	}
+}
+
+func buildSwitchCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
+	return &cobra.Command{
+		Use:   "switch [profile-name]",
+		Short: "Switch to a profile (interactive fuzzy search, or non-interactive with argument)",
+		Aliases: []string{"use"},
+		Run: func(cmd *cobra.Command, args []string) {
+			activeName, activeEmail, err := git.GetActiveProfile(g)
+			if err != nil {
+				fmt.Println("Error retrieving active profile:", err)
+				os.Exit(1)
+			}
+
+			var selected string
+			var ok bool
+
+			if len(args) > 0 {
+				// Non-interactive: apply the named profile directly
+				selected = args[0]
+				if _, exists := mgr.Profiles[selected]; !exists {
+					fmt.Printf("Profile '%s' not found. Available profiles:\n", selected)
+					for name := range mgr.Profiles {
+						fmt.Printf("- %s\n", name)
+					}
+					os.Exit(1)
+				}
+				ok = true
+			} else {
+				// Build list items for the interactive picker
+				var items []ui.ProfileListItem
+				for name, raw := range mgr.Profiles {
+					resolved, _, _ := mgr.Get(name)
+					isActive := resolved.Name == activeName && resolved.Email == activeEmail
+					displayName := name
+					if raw.Extends != "" {
+						displayName = fmt.Sprintf("%s (extends: %s)", name, raw.Extends)
+					}
+					items = append(items, ui.ProfileListItem{
+						Name:        name,
+						DisplayName: displayName,
+						Email:       resolved.Email,
+						IsActive:    isActive,
+					})
+				}
+				selected, ok, err = ui.InteractiveProfilePicker(items, activeName, activeEmail)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					os.Exit(1)
+				}
+				if !ok {
+					fmt.Println("Switch cancelled.")
+					return
+				}
+			}
+
+			p, _, err := mgr.Get(selected)
+			if err != nil {
+				fmt.Printf("Error loading profile: %v\n", err)
+				os.Exit(1)
+			}
+			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, p.Signing.Key, true); err != nil {
+				fmt.Printf("Error applying profile: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Switched to profile '%s'.\n", selected)
 		},
 	}
 }
