@@ -2,8 +2,11 @@ package profile
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -367,4 +370,204 @@ func TestManager_GetRaw(t *testing.T) {
 	if p.Extends != "base" {
 		t.Errorf("expected raw extends 'base', got %q", p.Extends)
 	}
+}
+
+// --- Gist export/import tests ---
+
+func TestExtractGistID(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		{"https://gist.github.com/abc123", "abc123"},
+		{"https://gist.github.com/user/abc123", "abc123"},
+		{"http://gist.github.com/abc123", "abc123"},
+		{"https://gist.github.com/abc123.json", "abc123"},
+		{"https://gist.github.com/abc123/", "abc123"},
+		{"abc123", "abc123"},
+		{"not-a-url", "not-a-url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			got := extractGistID(tt.url)
+			if got != tt.expected {
+				t.Errorf("extractGistID(%q) = %q, want %q", tt.url, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGistExporter_Export(t *testing.T) {
+	t.Run("posts to gist API and returns URL", func(t *testing.T) {
+		fake := &fakeDoer{
+			resp: &http.Response{
+				StatusCode: 201,
+				Body:       io.NopCloser(strings.NewReader(`{"html_url": "https://gist.github.com/abc123"}`)),
+			},
+		}
+		ex := GistExporter{HTTPClient: fake, Token: "fake-token"}
+		profiles := map[string]Profile{"work": {Name: "Test", Email: "test@example.com"}}
+		url, err := ex.Export(profiles, Templates{}, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://gist.github.com/abc123" {
+			t.Errorf("expected gist URL, got %q", url)
+		}
+		if fake.gotReq.URL.Path != "/gists" {
+			t.Errorf("expected POST /gists, got %s", fake.gotReq.URL.Path)
+		}
+		if fake.gotReq.Header.Get("Authorization") != "Bearer fake-token" {
+			t.Errorf("expected Authorization header, got %s", fake.gotReq.Header.Get("Authorization"))
+		}
+	})
+
+	t.Run("returns error on non-201 response", func(t *testing.T) {
+		fake := &fakeDoer{
+			resp: &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader(`{}`))},
+		}
+		ex := GistExporter{HTTPClient: fake, Token: "bad-token"}
+		_, err := ex.Export(nil, nil, false)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestGistImporter_Import(t *testing.T) {
+	t.Run("fetches gist and unmarshals profiles", func(t *testing.T) {
+		gistResp := `{
+			"files": {
+				"git-ctx-profiles.json": {
+					"content": "{\"profiles\":{\"work\":{\"name\":\"Test\",\"email\":\"test@example.com\"}}}"
+				}
+			}
+		}`
+		fake := &fakeDoer{
+			resp: &http.Response{
+				StatusCode: 200,
+				Body:       io.NopCloser(strings.NewReader(gistResp)),
+			},
+		}
+		im := GistImporter{HTTPClient: fake, Token: "fake-token"}
+		profiles, templates, err := im.Import("https://gist.github.com/abc123")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(profiles) != 1 {
+			t.Errorf("expected 1 profile, got %d", len(profiles))
+		}
+		if profiles["work"].Email != "test@example.com" {
+			t.Errorf("expected email test@example.com, got %s", profiles["work"].Email)
+		}
+		if len(templates) != 0 {
+			t.Errorf("expected 0 templates, got %v", templates)
+		}
+	})
+
+	t.Run("returns error for missing git-ctx-profiles.json", func(t *testing.T) {
+		fake := &fakeDoer{
+			resp: &http.Response{
+				StatusCode: 200,
+				Body:       io.NopCloser(strings.NewReader(`{"files": {}}`)),
+			},
+		}
+		im := GistImporter{HTTPClient: fake, Token: "fake-token"}
+		_, _, err := im.Import("https://gist.github.com/abc123")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("returns error on non-200 response", func(t *testing.T) {
+		fake := &fakeDoer{
+			resp: &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(`{}`))},
+		}
+		im := GistImporter{HTTPClient: fake, Token: "fake-token"}
+		_, _, err := im.Import("https://gist.github.com/notfound")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("returns error for invalid gist URL", func(t *testing.T) {
+		fake := &fakeDoer{}
+		im := GistImporter{HTTPClient: fake, Token: "fake-token"}
+		_, _, err := im.Import("")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestManager_ImportFromGist(t *testing.T) {
+	t.Run("merge adds only new profiles", func(t *testing.T) {
+		tmp := t.TempDir()
+		path := filepath.Join(tmp, "profiles.json")
+		m := NewManager(path)
+		m.Profiles = map[string]Profile{"existing": {Name: "Existing", Email: "existing@example.com"}}
+
+		gistResp := `{
+			"files": {
+				"git-ctx-profiles.json": {
+					"content": "{\"profiles\":{\"work\":{\"name\":\"Work\",\"email\":\"work@example.com\"}}}"
+				}
+			}
+		}`
+		fake := &fakeDoer{
+			resp: &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(gistResp))},
+		}
+		err := m.ImportFromGist("https://gist.github.com/abc123", true, fake, "token")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(m.Profiles) != 2 {
+			t.Errorf("expected 2 profiles, got %d", len(m.Profiles))
+		}
+		if _, ok := m.Profiles["existing"]; !ok {
+			t.Error("expected existing profile to be preserved")
+		}
+		if _, ok := m.Profiles["work"]; !ok {
+			t.Error("expected imported work profile")
+		}
+	})
+
+	t.Run("replace overwrites all profiles", func(t *testing.T) {
+		tmp := t.TempDir()
+		path := filepath.Join(tmp, "profiles.json")
+		m := NewManager(path)
+		m.Profiles = map[string]Profile{"existing": {Name: "Existing", Email: "existing@example.com"}}
+
+		gistResp := `{
+			"files": {
+				"git-ctx-profiles.json": {
+					"content": "{\"profiles\":{\"work\":{\"name\":\"Work\",\"email\":\"work@example.com\"}}}"
+				}
+			}
+		}`
+		fake := &fakeDoer{
+			resp: &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(gistResp))},
+		}
+		err := m.ImportFromGist("https://gist.github.com/abc123", false, fake, "token")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(m.Profiles) != 1 {
+			t.Errorf("expected 1 profile, got %d", len(m.Profiles))
+		}
+		if _, ok := m.Profiles["existing"]; ok {
+			t.Error("expected existing profile to be removed")
+		}
+	})
+}
+
+// fakeDoer is a mock http client for testing.
+type fakeDoer struct {
+	gotReq *http.Request
+	resp   *http.Response
+}
+
+func (f *fakeDoer) Do(req *http.Request) (*http.Response, error) {
+	f.gotReq = req
+	return f.resp, nil
 }

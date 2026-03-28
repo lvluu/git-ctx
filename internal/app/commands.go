@@ -4,9 +4,11 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/lvluu/git-ctx/internal/config"
 	"github.com/lvluu/git-ctx/internal/git"
@@ -304,10 +306,27 @@ func buildAutoCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig) *
 }
 
 func buildExportCmd(mgr *profile.Manager) *cobra.Command {
-	return &cobra.Command{
+	var gistExport, gistPublic bool
+
+	cmd := &cobra.Command{
 		Use:   "export [output-file]",
-		Short: "Export Git profiles to a JSON file",
+		Short: "Export Git profiles to a JSON file or GitHub Gist",
 		Run: func(cmd *cobra.Command, args []string) {
+			if gistExport {
+				token, err := getGHAuthToken()
+				if err != nil {
+					fmt.Println("Export failed:", err)
+					os.Exit(1)
+				}
+				url, err := mgr.ExportToGist(gistPublic, http.DefaultClient, token)
+				if err != nil {
+					fmt.Println("Export failed:", err)
+					os.Exit(1)
+				}
+				fmt.Printf("Profiles exported to: %s\n", url)
+				return
+			}
+			// File mode.
 			var outputPath string
 			if len(args) > 0 {
 				outputPath = args[0]
@@ -326,20 +345,57 @@ func buildExportCmd(mgr *profile.Manager) *cobra.Command {
 			fmt.Printf("Profiles exported to: %s\n", outputPath)
 		},
 	}
+	cmd.Flags().BoolVar(&gistExport, "gist", false, "Export to a GitHub Gist (requires gh auth)")
+	cmd.Flags().BoolVar(&gistPublic, "public", false, "Make Gist public (default: secret)")
+	return cmd
 }
 
 func buildImportCmd(mgr *profile.Manager) *cobra.Command {
-	return &cobra.Command{
-		Use:   "import <input-file>",
-		Short: "Import Git profiles from a JSON file",
-		Args:  cobra.ExactArgs(1),
+	var merge bool
+
+	cmd := &cobra.Command{
+		Use:   "import <input>",
+		Short: "Import Git profiles from a JSON file or GitHub Gist",
+		Long: `Import Git profiles from a JSON file or a GitHub Gist URL.
+
+When given a Gist URL (https://gist.github.com/...), profiles are imported
+from that Gist. When given a file path, profiles are imported from that file.
+
+Use --merge to add new profiles without replacing existing ones.
+Without --merge, a prompt asks whether to merge or replace.`,
+		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := importProfiles(mgr, args[0]); err != nil {
+			input := args[0]
+			if isGistURL(input) {
+				token, err := getGHAuthToken()
+				if err != nil {
+					fmt.Println("Import failed:", err)
+					os.Exit(1)
+				}
+				if err := mgr.ImportFromGist(input, merge, http.DefaultClient, token); err != nil {
+					fmt.Println("Import failed:", err)
+					os.Exit(1)
+				}
+				fmt.Printf("Profiles imported from: %s\n", input)
+				return
+			}
+			// File import.
+			if err := importProfiles(mgr, input, merge); err != nil {
 				fmt.Println("Import failed:", err)
 				os.Exit(1)
 			}
 		},
 	}
+	cmd.Flags().BoolVar(&merge, "merge", false, "Merge new profiles without replacing existing ones")
+	return cmd
+}
+
+// isGistURL reports whether input looks like a GitHub Gist URL.
+func isGistURL(input string) bool {
+	return strings.HasPrefix(input, "https://gist.github.com/") ||
+		strings.HasPrefix(input, "http://gist.github.com/") ||
+		strings.HasPrefix(input, "https://gist.githubusercontent.com/") ||
+		strings.HasPrefix(input, "http://gist.githubusercontent.com/")
 }
 
 func buildWorktreeCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
@@ -647,7 +703,7 @@ func exportProfiles(profiles map[string]profile.Profile, path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func importProfiles(mgr *profile.Manager, path string) error {
+func importProfiles(mgr *profile.Manager, path string, merge bool) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -656,26 +712,34 @@ func importProfiles(mgr *profile.Manager, path string) error {
 	if err := json.Unmarshal(data, &imported); err != nil {
 		return err
 	}
-	prompt := promptui.Select{
-		Label: "Import Strategy",
-		Items: []string{
-			"Merge (Add new profiles, keep existing)",
-			"Replace (Overwrite all existing profiles)",
-		},
-	}
-	_, strategy, err := prompt.Run()
-	if err != nil {
-		return fmt.Errorf("import cancelled")
-	}
-	switch strategy {
-	case "Merge (Add new profiles, keep existing)":
+	if merge {
 		for name, p := range imported {
 			if _, exists := mgr.Profiles[name]; !exists {
 				mgr.Profiles[name] = p
 			}
 		}
-	case "Replace (Overwrite all existing profiles)":
-		mgr.Profiles = imported
+	} else {
+		prompt := promptui.Select{
+			Label: "Import Strategy",
+			Items: []string{
+				"Merge (Add new profiles, keep existing)",
+				"Replace (Overwrite all existing profiles)",
+			},
+		}
+		_, strategy, err := prompt.Run()
+		if err != nil {
+			return fmt.Errorf("import cancelled")
+		}
+		switch strategy {
+		case "Merge (Add new profiles, keep existing)":
+			for name, p := range imported {
+				if _, exists := mgr.Profiles[name]; !exists {
+					mgr.Profiles[name] = p
+				}
+			}
+		case "Replace (Overwrite all existing profiles)":
+			mgr.Profiles = imported
+		}
 	}
 	mgr.Save()
 	fmt.Printf("Profiles imported successfully. Total profiles: %d\n", len(mgr.Profiles))
@@ -687,4 +751,14 @@ func trimSuffix(s, suffix string) string {
 		return s[:len(s)-len(suffix)]
 	}
 	return s
+}
+
+// getGHAuthToken reads the GitHub authentication token from the gh CLI.
+func getGHAuthToken() (string, error) {
+	cmd := exec.Command("gh", "auth", "token")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get gh auth token: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }

@@ -2,9 +2,13 @@
 package profile
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
+	"strings"
 )
 
 // Profile represents a Git profile with name, email, optional signing key,
@@ -220,4 +224,193 @@ func (m *Manager) RemoveTemplate(name string) bool {
 		delete(m.Templates, name)
 	}
 	return ok
+}
+
+// GistExporter handles exporting profiles to GitHub Gist.
+type GistExporter struct {
+	HTTPClient doer
+	Token     string
+}
+
+// GistImporter handles importing profiles from GitHub Gist.
+type GistImporter struct {
+	HTTPClient doer
+	Token     string
+}
+
+// doer abstracts net/http.Client for testing.
+type doer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// gistCreateRequest is the JSON body sent to POST /gists.
+type gistCreateRequest struct {
+	Description string          `json:"description"`
+	Public      bool            `json:"public"`
+	Files       map[string]struct {
+		Content string `json:"content"`
+	} `json:"files"`
+}
+
+// gistCreateResponse is the JSON response from POST /gists.
+type gistCreateResponse struct {
+	ID       string `json:"id"`
+	HTMLURL  string `json:"html_url"`
+	Files    map[string]struct {
+		Content string `json:"content"`
+	} `json:"files"`
+}
+
+// ExportToGist exports all profiles and templates as a secret Gist.
+func (m *Manager) ExportToGist(public bool, httpClient doer, token string) (string, error) {
+	ex := GistExporter{HTTPClient: httpClient, Token: token}
+	return ex.Export(m.Profiles, m.Templates, public)
+}
+
+// Export sends profiles and templates to GitHub Gist API and returns the Gist URL.
+func (ex GistExporter) Export(profiles map[string]Profile, templates Templates, public bool) (string, error) {
+	store := ProfilesStore{Profiles: profiles, Templates: templates}
+	data, err := json.MarshalIndent(store, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	body := gistCreateRequest{
+		Description: "git-ctx export v1",
+		Public:      public,
+		Files: map[string]struct {
+			Content string `json:"content"`
+		}{
+			"git-ctx-profiles.json": {Content: string(data)},
+		},
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "https://api.github.com/gists", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+ex.Token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := ex.HTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("gist API error: status %d", resp.StatusCode)
+	}
+
+	var result gistCreateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	return result.HTMLURL, nil
+}
+
+// ImportFromGist imports profiles from a GitHub Gist URL.
+// When merge is true, only new profile names are added; when false, all are replaced.
+func (m *Manager) ImportFromGist(gistURL string, merge bool, httpClient doer, token string) error {
+	im := GistImporter{HTTPClient: httpClient, Token: token}
+	profiles, templates, err := im.Import(gistURL)
+	if err != nil {
+		return err
+	}
+
+	if merge {
+		for name, p := range profiles {
+			if _, exists := m.Profiles[name]; !exists {
+				m.Profiles[name] = p
+			}
+		}
+		for name, tmpl := range templates {
+			if _, exists := m.Templates[name]; !exists {
+				m.Templates[name] = tmpl
+			}
+		}
+	} else {
+		m.Profiles = profiles
+		m.Templates = templates
+	}
+	return m.Save()
+}
+
+// Import fetches and unmarshals profiles from a GitHub Gist URL.
+func (im GistImporter) Import(gistURL string) (map[string]Profile, Templates, error) {
+	// Extract Gist ID from URL like https://gist.github.com/<user>/<id> or https://gist.github.com/<id>
+	id := extractGistID(gistURL)
+	if id == "" {
+		return nil, nil, fmt.Errorf("invalid gist URL: %s", gistURL)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/gists/"+id, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+im.Token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := im.HTTPClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("gist API error: status %d", resp.StatusCode)
+	}
+
+	// The GET /gists/:id response has a "files" map keyed by filename.
+	var gistResp struct {
+		Files map[string]struct {
+			Content string `json:"content"`
+		} `json:"files"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&gistResp); err != nil {
+		return nil, nil, err
+	}
+
+	fileData, ok := gistResp.Files["git-ctx-profiles.json"]
+	if !ok {
+		return nil, nil, fmt.Errorf("gist does not contain git-ctx-profiles.json")
+	}
+
+	var store ProfilesStore
+	if err := json.Unmarshal([]byte(fileData.Content), &store); err != nil {
+		return nil, nil, err
+	}
+
+	if store.Profiles == nil {
+		store.Profiles = make(map[string]Profile)
+	}
+	if store.Templates == nil {
+		store.Templates = make(Templates)
+	}
+	return store.Profiles, store.Templates, nil
+}
+
+// extractGistID pulls the Gist ID segment from various GitHub Gist URL formats.
+func extractGistID(url string) string {
+	// https://gist.github.com/<owner>/<id>
+	// https://gist.github.com/<id>
+	// <id> (raw ID)
+	u := strings.TrimPrefix(url, "https://gist.github.com/")
+	u = strings.TrimPrefix(u, "http://gist.github.com/")
+	u = strings.TrimPrefix(u, "/")
+	u = strings.TrimSuffix(u, "/")
+	u = strings.TrimSuffix(u, ".json")
+	if u == "" {
+		return ""
+	}
+	parts := strings.Split(u, "/")
+	return parts[len(parts)-1]
 }
