@@ -35,6 +35,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.yaml
+          release-type: go
 
   goreleaser:
     needs: [test, release-please]
