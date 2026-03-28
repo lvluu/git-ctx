@@ -66,6 +66,7 @@ func BuildProfileCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig
 	profileCmd.AddCommand(buildAutoCmd(mgr, g, appCfg))
 	profileCmd.AddCommand(buildExportCmd(mgr))
 	profileCmd.AddCommand(buildImportCmd(mgr))
+	profileCmd.AddCommand(buildDiffCmd(mgr))
 
 	return profileCmd
 }
@@ -340,6 +341,80 @@ func buildImportCmd(mgr *profile.Manager) *cobra.Command {
 			}
 		},
 	}
+}
+
+func buildDiffCmd(mgr *profile.Manager) *cobra.Command {
+	var jsonOutput bool
+
+	cmd := &cobra.Command{
+		Use:   "diff <profile-a> <profile-b>",
+		Short: "Show the diff between two profiles",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			nameA, nameB := args[0], args[1]
+
+			pA, okA, errA := mgr.Get(nameA)
+			if errA != nil {
+				fmt.Printf("Error loading profile %q: %v\n", nameA, errA)
+				os.Exit(1)
+			}
+			if !okA {
+				fmt.Printf("Profile %q not found.\n", nameA)
+				os.Exit(1)
+			}
+
+			pB, okB, errB := mgr.Get(nameB)
+			if errB != nil {
+				fmt.Printf("Error loading profile %q: %v\n", nameB, errB)
+				os.Exit(1)
+			}
+			if !okB {
+				fmt.Printf("Profile %q not found.\n", nameB)
+				os.Exit(1)
+			}
+
+			delta := profile.DiffProfiles(pA, pB)
+
+			if jsonOutput {
+				type diffEntry struct {
+					Key    string `json:"key"`
+					From   string `json:"from"`
+					To     string `json:"to"`
+				}
+				var out []diffEntry
+				for key, pair := range delta {
+					out = append(out, diffEntry{Key: key, From: pair[0], To: pair[1]})
+				}
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(out); err != nil {
+					fmt.Println("JSON encode error:", err)
+					os.Exit(1)
+				}
+				return
+			}
+
+			if len(delta) == 0 {
+				fmt.Printf("Profiles %q and %q are identical.\n", nameA, nameB)
+				return
+			}
+
+			for key, pair := range delta {
+				from := pair[0]
+				to := pair[1]
+				if from == "" {
+					fmt.Printf("[+] %s %s\n", key, to)
+				} else if to == "" {
+					fmt.Printf("[-] %s %s\n", key, from)
+				} else {
+					fmt.Printf("[~] %s\n", key)
+					fmt.Printf("    [-] %s\n    [+] %s\n", from, to)
+				}
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output diff as JSON array")
+	return cmd
 }
 
 func buildWorktreeCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
