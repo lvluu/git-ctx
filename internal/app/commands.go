@@ -899,21 +899,82 @@ func BuildWorktreeCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
 }
 
 // BuildDoctorCmd builds the doctor command.
-func BuildDoctorCmd(cfg config.AppConfig, mgr *profile.Manager) *cobra.Command {
-	return &cobra.Command{
+func BuildDoctorCmd(cfg config.AppConfig, mgr *profile.Manager, g git.Runner) *cobra.Command {
+	var doFix, dryRun bool
+
+	cmd := &cobra.Command{
 		Use: "doctor",
+		Short: "Diagnose git-ctx configuration issues",
+		Long: `Diagnose git-ctx configuration issues.
+
+With --fix, auto-repairs detected issues:
+  • Missing shell init → appends to ~/.bashrc and ~/.zshrc
+  • Corrupted profiles file → backs up and re-initializes
+  • Directory rule references missing profile → creates stub profile
+
+With --dry-run, shows what would be repaired without making changes.
+`,
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Println("git-ctx doctor")
 			fmt.Println()
 			results := runDoctorChecks(cfg, mgr)
 			printDoctorResults(results)
-			for _, r := range results {
-				if !r.OK {
-					os.Exit(1)
+
+			if !doFix {
+				for _, r := range results {
+					if !r.OK {
+						os.Exit(1)
+					}
 				}
+				return
+			}
+
+			// Collect repo root for context.
+			repoRoot, _, _ := git.FindRepoRoot(g)
+			gitBin, _ := exec.LookPath("git")
+
+			outcomes := runDoctorRepair(results, cfg, repoRoot, gitBin, mgr, dryRun)
+			if len(outcomes) == 0 {
+				fmt.Println("\nNo automatic repairs available for the issues above.")
+				os.Exit(1)
+				return
+			}
+
+			fmt.Println()
+			if dryRun {
+				fmt.Println("Dry run — no changes made.")
+			} else {
+				fmt.Println("Repairs applied.")
+			}
+			hadFailure := false
+			for checkName, outcome := range outcomes {
+				prefix := "  [fix] "
+				if dryRun {
+					prefix = "  [fix?] "
+				}
+				if outcome.Success {
+					fmt.Printf("%s%s: OK — %s\n", prefix, checkName, outcome.Summary)
+				} else {
+					fmt.Printf("%s%s: FAILED — %s\n", prefix, checkName, outcome.Summary)
+					hadFailure = true
+				}
+				if outcome.BackupPath != "" {
+					fmt.Printf("         Backup: %s\n", outcome.BackupPath)
+				}
+				if dryRun && len(outcome.DryRunHints) > 0 {
+					for _, h := range outcome.DryRunHints {
+						fmt.Printf("         → %s\n", h)
+					}
+				}
+			}
+			if hadFailure {
+				os.Exit(1)
 			}
 		},
 	}
+	cmd.Flags().BoolVar(&doFix, "fix", false, "Automatically repair detected issues")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be repaired without making changes")
+	return cmd
 }
 
 type doctorResult struct {
