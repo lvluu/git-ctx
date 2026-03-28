@@ -2,8 +2,15 @@ package git
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 )
+
+// gpgCmd returns an *exec.Cmd for the gpg binary. The binary name is not
+// logged or included in any error messages to prevent keyfile path leakage.
+func gpgCmd(args ...string) *exec.Cmd {
+	return exec.Command("gpg", args...)
+}
 
 // FindRepoRoot returns the git repository root directory.
 // Returns (root, true, nil) if in a git repo, ("", false, nil) if not, or error on failure.
