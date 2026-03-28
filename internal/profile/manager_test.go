@@ -351,6 +351,92 @@ func TestManager_RemoveTemplate(t *testing.T) {
 	}
 }
 
+// --- DiffProfiles tests ---
+
+func TestDiffProfiles(t *testing.T) {
+	tests := []struct {
+		name        string
+		profileA    Profile
+		profileB    Profile
+		wantKeys    []string          // keys expected in delta
+		wantPair    map[string][2]string // exact pairs expected
+	}{
+		{
+			name:     "identical profiles produce no delta",
+			profileA: Profile{Name: "Alice", Email: "alice@example.com"},
+			profileB: Profile{Name: "Alice", Email: "alice@example.com"},
+			wantKeys: nil,
+			wantPair: nil,
+		},
+		{
+			name:     "different name",
+			profileA: Profile{Name: "Alice", Email: "alice@example.com"},
+			profileB: Profile{Name: "Bob", Email: "alice@example.com"},
+			wantKeys: []string{"user.name"},
+			wantPair: map[string][2]string{"user.name": {"Alice", "Bob"}},
+		},
+		{
+			name:     "different email",
+			profileA: Profile{Name: "Alice", Email: "alice@example.com"},
+			profileB: Profile{Name: "Alice", Email: "bob@example.com"},
+			wantKeys: []string{"user.email"},
+			wantPair: map[string][2]string{"user.email": {"alice@example.com", "bob@example.com"}},
+		},
+		{
+			name:     "different signing key",
+			profileA: func() Profile { p := Profile{Name: "Alice", Email: "alice@example.com"}; p.Signing.Key = "AAA"; return p }(),
+			profileB: func() Profile { p := Profile{Name: "Alice", Email: "alice@example.com"}; p.Signing.Key = "BBB"; return p }(),
+			wantKeys: []string{"user.signingkey"},
+			wantPair: map[string][2]string{"user.signingkey": {"AAA", "BBB"}},
+		},
+		{
+			name:     "key absent in profile A, present in profile B",
+			profileA: Profile{Name: "Alice", Email: "alice@example.com"},
+			profileB: func() Profile { p := Profile{Name: "Alice", Email: "alice@example.com"}; p.Signing.Key = "KEY"; return p }(),
+			wantKeys: []string{"user.signingkey"},
+			wantPair: map[string][2]string{"user.signingkey": {"", "KEY"}},
+		},
+		{
+			name:     "key absent in profile B, present in profile A",
+			profileA: func() Profile { p := Profile{Name: "Alice", Email: "alice@example.com"}; p.Signing.Key = "KEY"; return p }(),
+			profileB: Profile{Name: "Alice", Email: "alice@example.com"},
+			wantKeys: []string{"user.signingkey"},
+			wantPair: map[string][2]string{"user.signingkey": {"KEY", ""}},
+		},
+		{
+			name:     "multiple keys differ",
+			profileA: Profile{Name: "Alice", Email: "alice@example.com"},
+			profileB: func() Profile { p := Profile{Name: "Bob", Email: "bob@example.com"}; p.Signing.Key = "KEY"; return p }(),
+			wantKeys: []string{"user.name", "user.email", "user.signingkey"},
+			wantPair: map[string][2]string{
+				"user.name":       {"Alice", "Bob"},
+				"user.email":      {"alice@example.com", "bob@example.com"},
+				"user.signingkey": {"", "KEY"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			delta := DiffProfiles(tt.profileA, tt.profileB)
+			if len(delta) != len(tt.wantKeys) {
+				t.Errorf("expected %d keys in delta, got %d: %v", len(tt.wantKeys), len(delta), delta)
+			}
+			for _, k := range tt.wantKeys {
+				pair, ok := delta[k]
+				if !ok {
+					t.Errorf("expected key %q in delta, but it was missing", k)
+					continue
+				}
+				wantPair := tt.wantPair[k]
+				if pair != wantPair {
+					t.Errorf("delta[%q] = %v, want %v", k, pair, wantPair)
+				}
+			}
+		})
+	}
+}
+
 func TestManager_GetRaw(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "profiles.json")

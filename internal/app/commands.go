@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/lvluu/git-ctx/internal/config"
@@ -65,31 +66,48 @@ func BuildProfileCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig
 	profileCmd.AddCommand(buildEditCmd(mgr))
 	profileCmd.AddCommand(buildRemoveCmd(mgr))
 	profileCmd.AddCommand(buildApplyCmd(mgr, g))
+	profileCmd.AddCommand(buildSwitchCmd(mgr, g))
 	profileCmd.AddCommand(buildAutoCmd(mgr, g, appCfg))
 	profileCmd.AddCommand(buildExportCmd(mgr))
 	profileCmd.AddCommand(buildImportCmd(mgr))
+	profileCmd.AddCommand(buildDiffCmd(mgr))
 
 	return profileCmd
 }
 
 func buildListCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
-	return &cobra.Command{
+	var verbose, jsonOut bool
+
+	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List all saved Git profiles",
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(mgr.Profiles) == 0 {
-				fmt.Println("No profiles found. Use 'git ctx profile add' to create a profile.")
+				if jsonOut {
+					fmt.Println("[]")
+				} else {
+					fmt.Println("No profiles found. Use 'git ctx profile add' to create a profile.")
+				}
 				return
 			}
-			activeName, activeEmail, err := git.GetActiveProfile(g)
-			if err != nil {
-				fmt.Println("Error retrieving active profile:", err)
+
+			activeName, activeEmail, _ := git.GetActiveProfile(g)
+
+			if jsonOut {
+				printProfilesJSON(mgr, activeName, activeEmail)
 				return
 			}
+
+			if verbose {
+				printProfilesVerbose(mgr, activeName, activeEmail)
+				return
+			}
+
+			// Default: compact list.
 			for name, p := range mgr.Profiles {
 				raw := p
 				resolved := p
-				if p.Extends != "" {
+				if raw.Extends != "" {
 					resolved, _, _ = mgr.Get(name)
 				}
 				activeMarker := ""
@@ -110,6 +128,180 @@ func buildListCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
 			}
 		},
 	}
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed table with metadata")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output profiles as JSON")
+	return cmd
+}
+
+// ProfileRow holds the data for one verbose table row.
+type ProfileRow struct {
+	Name       string `json:"name"`
+	Email      string `json:"email"`
+	SigningKey string `json:"signingKey,omitempty"`
+	Template   string `json:"template,omitempty"`
+	LastUsed   string `json:"lastUsed,omitempty"`
+	Active     bool   `json:"active"`
+}
+
+func printProfilesVerbose(mgr *profile.Manager, activeName, activeEmail string) {
+	// Collect and sort profile names for stable output.
+	var names []string
+	for name := range mgr.Profiles {
+		names = append(names, name)
+	}
+
+	// Column widths (pre-computed for consistent padding).
+	const (
+		colNAME       = "NAME"
+		colEMAIL      = "EMAIL"
+		colSIGNINGKEY = "SIGNING KEY"
+		colTEMPLATE   = "TEMPLATE"
+		colACTIVE     = "ACTIVE"
+		colLASTUSED   = "LAST USED"
+	)
+
+	// We need the effective widths based on content.
+	type row struct{ name, email, key, tmpl, active, lastUsed string }
+	rows := make([]row, 0, len(names))
+
+	maxName, maxEmail, maxKey, maxTmpl := len(colNAME), len(colEMAIL), len(colSIGNINGKEY), len(colTEMPLATE)
+
+	for _, name := range names {
+		p, _, _ := mgr.Get(name)
+		raw, _ := mgr.GetRaw(name)
+		active := p.Name == activeName && p.Email == activeEmail
+		activeStr := "-"
+		if active {
+			activeStr = "*"
+		}
+		lastUsed := raw.LastUsed
+		if lastUsed == "" {
+			lastUsed = "-"
+		}
+		tmplStr := "-"
+		if raw.Extends != "" {
+			tmplStr = raw.Extends
+		}
+		keyStr := "-"
+		if p.Signing.Key != "" {
+			keyStr = p.Signing.Key
+		}
+		rows = append(rows, row{
+			name:     name,
+			email:    p.Email,
+			key:      keyStr,
+			tmpl:     tmplStr,
+			active:   activeStr,
+			lastUsed: lastUsed,
+		})
+		if l := len(name); l > maxName {
+			maxName = l
+		}
+		if l := len(p.Email); l > maxEmail {
+			maxEmail = l
+		}
+		if l := len(keyStr); l > maxKey {
+			maxKey = l
+		}
+		if l := len(tmplStr); l > maxTmpl {
+			maxTmpl = l
+		}
+	}
+
+	pad := func(s string, width int) string {
+		return s + spaces(max(0, width-len(s)))
+	}
+	sep := func() {
+		fmt.Print("  ")
+	}
+
+	// Header.
+	fmt.Print(pad("", 2))
+	sep()
+	fmt.Print(pad(colNAME, maxName))
+	sep()
+	fmt.Print(pad(colEMAIL, maxEmail))
+	sep()
+	fmt.Print(pad(colSIGNINGKEY, maxKey))
+	sep()
+	fmt.Print(pad(colTEMPLATE, maxTmpl))
+	sep()
+	fmt.Print(colACTIVE)
+	sep()
+	fmt.Println(colLASTUSED)
+
+	// Divider.
+	fmt.Print(pad("", 2))
+	sep()
+	fmt.Print(pad("", maxName))
+	sep()
+	fmt.Print(pad("", maxEmail))
+	sep()
+	fmt.Print(pad("", maxKey))
+	sep()
+	fmt.Print(pad("", maxTmpl))
+	sep()
+	fmt.Print(pad("", len(colACTIVE)))
+	sep()
+	fmt.Println(strings.Repeat("-", len(colLASTUSED)))
+
+	// Rows.
+	for _, r := range rows {
+		prefix := "  "
+		fmt.Print(prefix)
+		sep()
+		fmt.Print(pad(r.name, maxName))
+		sep()
+		fmt.Print(pad(r.email, maxEmail))
+		sep()
+		fmt.Print(pad(r.key, maxKey))
+		sep()
+		fmt.Print(pad(r.tmpl, maxTmpl))
+		sep()
+		fmt.Print(pad(r.active, len(colACTIVE)))
+		sep()
+		fmt.Println(r.lastUsed)
+	}
+}
+
+func spaces(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.Repeat(" ", n)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func printProfilesJSON(mgr *profile.Manager, activeName, activeEmail string) {
+	var rows []ProfileRow
+	for name := range mgr.Profiles {
+		p, _, _ := mgr.Get(name)
+		raw, _ := mgr.GetRaw(name)
+		active := p.Name == activeName && p.Email == activeEmail
+		r := ProfileRow{
+			Name:       name,
+			Email:      p.Email,
+			SigningKey: p.Signing.Key,
+			Active:     active,
+		}
+		if raw.Extends != "" {
+			r.Template = raw.Extends
+		}
+		if raw.LastUsed != "" {
+			r.LastUsed = raw.LastUsed
+		}
+		rows = append(rows, r)
+	}
+	// Sort by name for stable output.
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	data, _ := json.MarshalIndent(rows, "", "  ")
+	fmt.Println(string(data))
 }
 
 func buildAddCmd(mgr *profile.Manager) *cobra.Command {
@@ -208,37 +400,148 @@ func buildRemoveCmd(mgr *profile.Manager) *cobra.Command {
 }
 
 func buildApplyCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
-	return &cobra.Command{
-		Use:   "apply",
-		Short: "Apply a specific Git profile (interactive)",
+	var applyDryRun, applyDiff, applyQuiet bool
+
+	cmd := &cobra.Command{
+		Use:   "apply [profile-name]",
+		Short: "Apply a specific Git profile",
+		Args:  cobra.RangeArgs(0, 1),
 		Run: func(cmd *cobra.Command, args []string) {
-			var names []string
-			for name := range mgr.Profiles {
-				names = append(names, name)
+			var selected string
+			if len(args) == 1 {
+				selected = args[0]
+			} else {
+				var names []string
+				for name := range mgr.Profiles {
+					names = append(names, name)
+				}
+				prompt := promptui.Select{
+					Label: "Select profile to apply",
+					Items: names,
+				}
+				_, s, err := prompt.Run()
+				if err != nil {
+					fmt.Println("Cancelled.")
+					return
+				}
+				selected = s
 			}
-			prompt := promptui.Select{
-				Label: "Select profile to apply",
-				Items: names,
-			}
-			_, selected, err := prompt.Run()
-			if err != nil {
-				fmt.Println("Cancelled.")
-				return
-			}
+
 			p, ok, err := mgr.Get(selected)
 			if err != nil {
-				fmt.Printf("Error applying profile: %v\n", err)
+				fmt.Printf("Error: %v\n", err)
 				return
 			}
 			if !ok {
 				fmt.Printf("Profile '%s' not found.\n", selected)
 				return
 			}
-			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, p.Signing.Key, true); err != nil {
-				fmt.Printf("Error applying profile: %v\n", err)
+
+			// Dry-run / diff mode: no config changes
+			if applyDryRun || applyDiff {
+				diffs, err := git.DiffProfile(g, "", "", p.Name, p.Email, p.Signing.Key)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					return
+				}
+				if len(diffs) == 0 {
+					if !applyQuiet {
+						fmt.Println("[DRY RUN] No changes needed; user.name/user.email already match.")
+					}
+					return
+				}
+				if applyDryRun {
+					if !applyQuiet {
+						fmt.Print(git.FormatDryRun(diffs))
+						fmt.Println()
+					}
+				} else {
+					fmt.Print(git.FormatDiff(diffs))
+					fmt.Println()
+				}
 				return
 			}
-			fmt.Printf("Profile '%s' applied successfully!\n", selected)
+
+			// Real apply
+			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, p.Signing.Key, true); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return
+			}
+			if !applyQuiet {
+				fmt.Printf("Profile '%s' applied successfully!\n", selected)
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&applyDryRun, "dry-run", false, "Show what would be changed; don't modify config")
+	cmd.Flags().BoolVar(&applyDiff, "diff", false, "Show changes as a git-style diff; don't modify config")
+	cmd.Flags().BoolVar(&applyQuiet, "quiet", false, "Suppress output")
+	return cmd
+}
+
+func buildSwitchCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
+	return &cobra.Command{
+		Use:   "switch [profile-name]",
+		Short: "Switch to a profile (interactive fuzzy search, or non-interactive with argument)",
+		Aliases: []string{"use"},
+		Run: func(cmd *cobra.Command, args []string) {
+			activeName, activeEmail, err := git.GetActiveProfile(g)
+			if err != nil {
+				fmt.Println("Error retrieving active profile:", err)
+				os.Exit(1)
+			}
+
+			var selected string
+			var ok bool
+
+			if len(args) > 0 {
+				// Non-interactive: apply the named profile directly
+				selected = args[0]
+				if _, exists := mgr.Profiles[selected]; !exists {
+					fmt.Printf("Profile '%s' not found. Available profiles:\n", selected)
+					for name := range mgr.Profiles {
+						fmt.Printf("- %s\n", name)
+					}
+					os.Exit(1)
+				}
+				ok = true
+			} else {
+				// Build list items for the interactive picker
+				var items []ui.ProfileListItem
+				for name, raw := range mgr.Profiles {
+					resolved, _, _ := mgr.Get(name)
+					isActive := resolved.Name == activeName && resolved.Email == activeEmail
+					displayName := name
+					if raw.Extends != "" {
+						displayName = fmt.Sprintf("%s (extends: %s)", name, raw.Extends)
+					}
+					items = append(items, ui.ProfileListItem{
+						Name:        name,
+						DisplayName: displayName,
+						Email:       resolved.Email,
+						IsActive:    isActive,
+					})
+				}
+				selected, ok, err = ui.InteractiveProfilePicker(items, activeName, activeEmail)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					os.Exit(1)
+				}
+				if !ok {
+					fmt.Println("Switch cancelled.")
+					return
+				}
+			}
+
+			p, _, err := mgr.Get(selected)
+			if err != nil {
+				fmt.Printf("Error loading profile: %v\n", err)
+				os.Exit(1)
+			}
+			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, p.Signing.Key, true); err != nil {
+				fmt.Printf("Error applying profile: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Switched to profile '%s'.\n", selected)
 		},
 	}
 }
@@ -258,6 +561,7 @@ func buildAutoCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig) *
 				FileExists:     func(path string) bool { _, err := os.Stat(path); return err == nil },
 				DirectoryRules: convertDirRules(appCfg.DirectoryRules),
 				GetCurrentDir:  os.Getwd,
+				GitRunner:     g,
 			}
 			res, err := resolver.Resolve()
 			if err != nil {
@@ -342,6 +646,80 @@ func buildImportCmd(mgr *profile.Manager) *cobra.Command {
 			}
 		},
 	}
+}
+
+func buildDiffCmd(mgr *profile.Manager) *cobra.Command {
+	var jsonOutput bool
+
+	cmd := &cobra.Command{
+		Use:   "diff <profile-a> <profile-b>",
+		Short: "Show the diff between two profiles",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			nameA, nameB := args[0], args[1]
+
+			pA, okA, errA := mgr.Get(nameA)
+			if errA != nil {
+				fmt.Printf("Error loading profile %q: %v\n", nameA, errA)
+				os.Exit(1)
+			}
+			if !okA {
+				fmt.Printf("Profile %q not found.\n", nameA)
+				os.Exit(1)
+			}
+
+			pB, okB, errB := mgr.Get(nameB)
+			if errB != nil {
+				fmt.Printf("Error loading profile %q: %v\n", nameB, errB)
+				os.Exit(1)
+			}
+			if !okB {
+				fmt.Printf("Profile %q not found.\n", nameB)
+				os.Exit(1)
+			}
+
+			delta := profile.DiffProfiles(pA, pB)
+
+			if jsonOutput {
+				type diffEntry struct {
+					Key    string `json:"key"`
+					From   string `json:"from"`
+					To     string `json:"to"`
+				}
+				var out []diffEntry
+				for key, pair := range delta {
+					out = append(out, diffEntry{Key: key, From: pair[0], To: pair[1]})
+				}
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(out); err != nil {
+					fmt.Println("JSON encode error:", err)
+					os.Exit(1)
+				}
+				return
+			}
+
+			if len(delta) == 0 {
+				fmt.Printf("Profiles %q and %q are identical.\n", nameA, nameB)
+				return
+			}
+
+			for key, pair := range delta {
+				from := pair[0]
+				to := pair[1]
+				if from == "" {
+					fmt.Printf("[+] %s %s\n", key, to)
+				} else if to == "" {
+					fmt.Printf("[-] %s %s\n", key, from)
+				} else {
+					fmt.Printf("[~] %s\n", key)
+					fmt.Printf("    [-] %s\n    [+] %s\n", from, to)
+				}
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output diff as JSON array")
+	return cmd
 }
 
 func buildWorktreeCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
@@ -644,21 +1022,82 @@ func BuildWorktreeCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
 }
 
 // BuildDoctorCmd builds the doctor command.
-func BuildDoctorCmd(cfg config.AppConfig, mgr *profile.Manager) *cobra.Command {
-	return &cobra.Command{
+func BuildDoctorCmd(cfg config.AppConfig, mgr *profile.Manager, g git.Runner) *cobra.Command {
+	var doFix, dryRun bool
+
+	cmd := &cobra.Command{
 		Use: "doctor",
+		Short: "Diagnose git-ctx configuration issues",
+		Long: `Diagnose git-ctx configuration issues.
+
+With --fix, auto-repairs detected issues:
+  • Missing shell init → appends to ~/.bashrc and ~/.zshrc
+  • Corrupted profiles file → backs up and re-initializes
+  • Directory rule references missing profile → creates stub profile
+
+With --dry-run, shows what would be repaired without making changes.
+`,
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Println("git-ctx doctor")
 			fmt.Println()
 			results := runDoctorChecks(cfg, mgr)
 			printDoctorResults(results)
-			for _, r := range results {
-				if !r.OK {
-					os.Exit(1)
+
+			if !doFix {
+				for _, r := range results {
+					if !r.OK {
+						os.Exit(1)
+					}
 				}
+				return
+			}
+
+			// Collect repo root for context.
+			repoRoot, _, _ := git.FindRepoRoot(g)
+			gitBin, _ := exec.LookPath("git")
+
+			outcomes := runDoctorRepair(results, cfg, repoRoot, gitBin, mgr, dryRun)
+			if len(outcomes) == 0 {
+				fmt.Println("\nNo automatic repairs available for the issues above.")
+				os.Exit(1)
+				return
+			}
+
+			fmt.Println()
+			if dryRun {
+				fmt.Println("Dry run — no changes made.")
+			} else {
+				fmt.Println("Repairs applied.")
+			}
+			hadFailure := false
+			for checkName, outcome := range outcomes {
+				prefix := "  [fix] "
+				if dryRun {
+					prefix = "  [fix?] "
+				}
+				if outcome.Success {
+					fmt.Printf("%s%s: OK — %s\n", prefix, checkName, outcome.Summary)
+				} else {
+					fmt.Printf("%s%s: FAILED — %s\n", prefix, checkName, outcome.Summary)
+					hadFailure = true
+				}
+				if outcome.BackupPath != "" {
+					fmt.Printf("         Backup: %s\n", outcome.BackupPath)
+				}
+				if dryRun && len(outcome.DryRunHints) > 0 {
+					for _, h := range outcome.DryRunHints {
+						fmt.Printf("         → %s\n", h)
+					}
+				}
+			}
+			if hadFailure {
+				os.Exit(1)
 			}
 		},
 	}
+	cmd.Flags().BoolVar(&doFix, "fix", false, "Automatically repair detected issues")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be repaired without making changes")
+	return cmd
 }
 
 type doctorResult struct {

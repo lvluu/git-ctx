@@ -2,8 +2,15 @@ package git
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 )
+
+// gpgCmd returns an *exec.Cmd for the gpg binary. The binary name is not
+// logged or included in any error messages to prevent keyfile path leakage.
+func gpgCmd(args ...string) *exec.Cmd {
+	return exec.Command("gpg", args...)
+}
 
 // FindRepoRoot returns the git repository root directory.
 // Returns (root, true, nil) if in a git repo, ("", false, nil) if not, or error on failure.
@@ -96,6 +103,92 @@ func ApplyProfile(git Runner, dir string, scopeFlag string, name, email, signing
 	}
 
 	return changed, nil
+}
+
+// ProfileDiff represents a single change to a git config entry.
+type ProfileDiff struct {
+	Key       string // git config key, e.g. "user.name"
+	Action    string // "set", "delete", "skip" (no change needed)
+	OldValue  string // current value in git config, "" if unset
+	NewValue  string // value from profile, "" if deleting
+}
+
+// DiffProfile compares a profile against current git config and returns the diff.
+// It makes no changes to git config.
+func DiffProfile(git Runner, dir string, scopeFlag string, name, email, signingKey string) ([]ProfileDiff, error) {
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(email) == "" {
+		return nil, fmt.Errorf("profile name and email must both be non-empty")
+	}
+
+	var diffs []ProfileDiff
+
+	addIfChanged := func(key, newVal string) {
+		curVal, isSet, err := ConfigGet(git, dir, scopeFlag, key)
+		if err != nil {
+			return
+		}
+		if !isSet {
+			diffs = append(diffs, ProfileDiff{Key: key, Action: "set", OldValue: "", NewValue: newVal})
+		} else if curVal != newVal {
+			diffs = append(diffs, ProfileDiff{Key: key, Action: "set", OldValue: curVal, NewValue: newVal})
+		}
+	}
+
+	addIfChanged("user.name", name)
+	addIfChanged("user.email", email)
+
+	if signingKey != "" {
+		// Signing key: profile wants to set it
+		curKey, keySet, _ := ConfigGet(git, dir, scopeFlag, "user.signingkey")
+		if !keySet {
+			diffs = append(diffs, ProfileDiff{Key: "user.signingkey", Action: "set", OldValue: "", NewValue: signingKey})
+		} else if curKey != signingKey {
+			diffs = append(diffs, ProfileDiff{Key: "user.signingkey", Action: "set", OldValue: curKey, NewValue: signingKey})
+		}
+
+		curGPG, gpgSet, _ := ConfigGet(git, dir, scopeFlag, "commit.gpgsign")
+		if !gpgSet {
+			diffs = append(diffs, ProfileDiff{Key: "commit.gpgsign", Action: "set", OldValue: "", NewValue: "true"})
+		} else if curGPG != "true" {
+			diffs = append(diffs, ProfileDiff{Key: "commit.gpgsign", Action: "set", OldValue: curGPG, NewValue: "true"})
+		}
+	}
+
+	return diffs, nil
+}
+
+// FormatDryRun formats diffs for --dry-run output.
+func FormatDryRun(diffs []ProfileDiff) string {
+	var lines []string
+	for _, d := range diffs {
+		if d.Action == "set" {
+			if d.OldValue == "" {
+				lines = append(lines, fmt.Sprintf("[DRY RUN] Would set %s %q (currently unset)", d.Key, d.NewValue))
+			} else {
+				lines = append(lines, fmt.Sprintf("[DRY RUN] Would set %s %q (currently %q)", d.Key, d.NewValue, d.OldValue))
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// FormatDiff formats diffs as a git-style diff.
+func FormatDiff(diffs []ProfileDiff) string {
+	var lines []string
+	for _, d := range diffs {
+		if d.Action == "set" {
+			if d.NewValue == "" {
+				lines = append(lines, fmt.Sprintf("-%s = %s", d.Key, d.OldValue))
+				lines = append(lines, fmt.Sprintf("+%s", d.Key))
+			} else {
+				if d.OldValue != "" {
+					lines = append(lines, fmt.Sprintf("-%s = %s", d.Key, d.OldValue))
+				}
+				lines = append(lines, fmt.Sprintf("+%s = %s", d.Key, d.NewValue))
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // GetActiveProfile retrieves the currently active Git profile from config.

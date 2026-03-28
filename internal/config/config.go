@@ -18,10 +18,22 @@ type AppConfig struct {
 	path           string
 }
 
+// RuleType defines the matching strategy for a directory rule.
+type RuleType string
+
+const (
+	RuleTypePath   RuleType = "path"    // directory prefix match (default/legacy)
+	RuleTypeRemote RuleType = "remote"  // match by git remote URL
+	RuleTypeEmail  RuleType = "email"   // match by git user.email
+)
+
 // DirectoryRule maps a directory path prefix to a profile name.
 type DirectoryRule struct {
-	Pattern string `yaml:"pattern"`
-	Profile string `yaml:"profile"`
+	Pattern string  `yaml:"pattern"` // used for type=path
+	Remote  string  `yaml:"remote"`  // used for type=remote: host/org substring
+	Email   string  `yaml:"email"`   // used for type=email: exact email match
+	Type    RuleType `yaml:"type"`   // defaults to "path" if Pattern is set
+	Profile string  `yaml:"profile"` // profile to activate
 }
 
 // WorktreeHooks holds hook commands that run at various lifecycle points.
@@ -67,6 +79,23 @@ func (cfg AppConfig) MatchDirectoryRule(dir string) (profile string, ok bool) {
 		return best, true
 	}
 	return "", false
+}
+
+// RuleTypeFor returns the effective rule type, defaulting to RuleTypePath.
+func (r DirectoryRule) EffectiveType() RuleType {
+	if r.Type != "" {
+		return r.Type
+	}
+	// Legacy: a non-empty Pattern without an explicit type implies path
+	if r.Pattern != "" {
+		return RuleTypePath
+	}
+	return RuleTypePath
+}
+
+// String implements fmt.Stringer for RuleType.
+func (t RuleType) String() string {
+	return string(t)
 }
 
 // DefaultPath returns the default config path (~/.git-ctx.yaml).
@@ -117,12 +146,20 @@ func Init(cfgPath string, force bool) error {
 	scaffold := fmt.Sprintf(`# git-ctx configuration
 profiles_path: %s
 
-# Map directory prefixes to profiles.
-# Longest matching prefix wins.
+# Rule matching priority (highest to lowest):
+#   1. remote  – git remote URL contains the substring
+#   2. email   – repo's git user.email equals the value
+#   3. path    – longest directory-prefix match (existing behaviour)
+# A rule needs at least one of: pattern (type=path), remote, or email.
 directory_rules:
-  - pattern: "~/work"
+  - type: path
+    pattern: "~/work"
     profile: work
-  - pattern: "~/personal"
+  - type: remote
+    remote: github.com/your-org
+    profile: work
+  - type: email
+    email: levi@company.com
     profile: personal
 
 worktree:

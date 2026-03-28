@@ -54,7 +54,7 @@ func main() {
 		app.BuildWorktreeCmd(cfg, g),
 		initCmd,
 		shellInitCmd,
-		app.BuildDoctorCmd(cfg, mgr),
+		app.BuildDoctorCmd(cfg, mgr, g),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
