@@ -2,6 +2,9 @@ package git
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -96,6 +99,94 @@ func ApplyProfile(git Runner, dir string, scopeFlag string, name, email, signing
 	}
 
 	return changed, nil
+}
+
+// gpgCmd returns an *exec.Cmd for the gpg binary. The binary name is not
+// logged or included in any error messages to prevent keyfile path leakage.
+func gpgCmd(args ...string) *exec.Cmd {
+	return exec.Command("gpg", args...)
+}
+
+// GPGRunner runs GPG commands. It allows tests to inject fake implementations
+// without spawning a real GPG binary.
+type GPGRunner interface {
+	Run(args ...string) error
+	Output(args ...string) ([]byte, error)
+}
+
+// gpgRealRunner implements GPGRunner using the real gpg binary.
+type gpgRealRunner struct{}
+
+// NewGPGRunner returns a GPGRunner backed by the real gpg binary.
+func NewGPGRunner() GPGRunner { return &gpgRealRunner{} }
+
+func (g *gpgRealRunner) Run(args ...string) error {
+	return gpgCmd(args...).Run()
+}
+func (g *gpgRealRunner) Output(args ...string) ([]byte, error) {
+	return gpgCmd(args...).Output()
+}
+
+// expandPath expands ~ to the user's home directory.
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+// warnIfWorldReadable checks whether the given file is readable by other users
+// and prints a warning to stderr if so. The check is best-effort.
+func warnIfWorldReadable(path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	// Check world-readable bit (mode & 007)
+	if info.Mode().Perm()&007 != 0 {
+		fmt.Fprintf(os.Stderr, "warning: GPG keyfile %q is world-readable; consider 'chmod 600 %q'\n", path, path)
+	}
+}
+
+// ImportGPGKey imports a GPG key from keyfile. The keyfile path is logged;
+// its contents are never logged.
+func ImportGPGKey(keyfile string, g GPGRunner) error {
+	absPath := expandPath(keyfile)
+	if _, err := os.Stat(absPath); err != nil {
+		return fmt.Errorf("GPG keyfile not found: %s", absPath)
+	}
+	warnIfWorldReadable(absPath)
+
+	// GPG import is idempotent; ignore exit errors so a pre-existing import succeeds.
+	_ = g.Run("--import", absPath)
+	return nil
+}
+
+// ExportGPGKey deletes the secret key identified by fingerprint from the GPG keyring.
+func ExportGPGKey(fingerprint string, g GPGRunner) error {
+	return g.Run("--batch", "--yes", "--delete-secret-keys", fingerprint)
+}
+
+// ValidateGPGKey checks whether the secret key identified by fingerprint is present
+// in the local GPG keyring.
+func ValidateGPGKey(fingerprint string, g GPGRunner) (bool, error) {
+	out, err := g.Output("--batch", "--list-secret-keys", fingerprint)
+	if err != nil {
+		return false, nil
+	}
+	// Match the primary key fingerprint line or a subkey fingerprint line.
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "fpr") || strings.HasPrefix(trimmed, "fsb") {
+			if strings.Contains(trimmed, fingerprint) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // GetActiveProfile retrieves the currently active Git profile from config.

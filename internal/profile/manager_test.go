@@ -221,6 +221,47 @@ func TestResolveProfile_OverridePrecedence(t *testing.T) {
 	}
 }
 
+func TestResolveProfile_GPGConfig(t *testing.T) {
+	t.Run("inherits GPGConfig from template", func(t *testing.T) {
+		templates := Templates{
+			"work-base": Profile{GPG: GPGConfig{Keyfile: "~/.gnupg/work.asc", ImportOnActivate: true}},
+		}
+		profile := Profile{Name: "Dev", Email: "dev@example.com", Extends: "work-base"}
+		resolved, err := ResolveProfile(profile, templates)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resolved.GPG.Keyfile != "~/.gnupg/work.asc" {
+			t.Errorf("expected GPG keyfile ~/.gnupg/work.asc, got %q", resolved.GPG.Keyfile)
+		}
+		if !resolved.GPG.ImportOnActivate {
+			t.Error("expected ImportOnActivate to be true")
+		}
+	})
+
+	t.Run("explicit GPGConfig overrides template", func(t *testing.T) {
+		templates := Templates{
+			"base": Profile{GPG: GPGConfig{Keyfile: "~/.gnupg/base.asc"}},
+		}
+		profile := Profile{
+			Name:   "Personal",
+			Email:  "me@example.com",
+			Extends: "base",
+			GPG:    GPGConfig{Keyfile: "~/.gnupg/personal.asc", ImportOnActivate: true},
+		}
+		resolved, err := ResolveProfile(profile, templates)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resolved.GPG.Keyfile != "~/.gnupg/personal.asc" {
+			t.Errorf("expected GPG keyfile ~/.gnupg/personal.asc, got %q", resolved.GPG.Keyfile)
+		}
+		if !resolved.GPG.ImportOnActivate {
+			t.Error("expected ImportOnActivate to be true")
+		}
+	})
+}
+
 func TestResolveProfile_NoExtends(t *testing.T) {
 	t.Run("returns cloned profile with cleared extends", func(t *testing.T) {
 		profile := Profile{Name: "Solo", Email: "solo@example.com", Extends: ""}

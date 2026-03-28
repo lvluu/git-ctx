@@ -66,6 +66,7 @@ func BuildProfileCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig
 	profileCmd.AddCommand(buildAutoCmd(mgr, g, appCfg))
 	profileCmd.AddCommand(buildExportCmd(mgr))
 	profileCmd.AddCommand(buildImportCmd(mgr))
+	profileCmd.AddCommand(buildValidateGPGCmd(mgr, g))
 
 	return profileCmd
 }
@@ -232,9 +233,21 @@ func buildApplyCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
 				fmt.Printf("Profile '%s' not found.\n", selected)
 				return
 			}
+			if p.GPG.Keyfile != "" && p.GPG.ImportOnActivate {
+				if err := git.ImportGPGKey(p.GPG.Keyfile, git.NewGPGRunner()); err != nil {
+					fmt.Printf("Warning: GPG key import failed: %v\n", err)
+				}
+			}
 			if _, err := git.ApplyProfile(g, "", "", p.Name, p.Email, p.Signing.Key, true); err != nil {
 				fmt.Printf("Error applying profile: %v\n", err)
 				return
+			}
+			// Validate signing key is present if configured.
+			if p.Signing.Key != "" {
+				valid, _ := git.ValidateGPGKey(p.Signing.Key, git.NewGPGRunner())
+				if !valid {
+					fmt.Printf("Warning: signing key %q is configured but not found in GPG keyring.\n", p.Signing.Key)
+				}
 			}
 			fmt.Printf("Profile '%s' applied successfully!\n", selected)
 		},
@@ -284,10 +297,22 @@ func buildAutoCmd(mgr *profile.Manager, g git.Runner, appCfg config.AppConfig) *
 				}
 				os.Exit(1)
 			}
+			if p.GPG.Keyfile != "" && p.GPG.ImportOnActivate {
+				if err := git.ImportGPGKey(p.GPG.Keyfile, git.NewGPGRunner()); err != nil {
+					fmt.Println("Warning: GPG key import failed:", err)
+				}
+			}
 			changed, err := git.ApplyProfile(g, res.WorkDir, res.ScopeFlag, p.Name, p.Email, p.Signing.Key, autoForce)
 			if err != nil {
 				fmt.Println("Auto apply failed:", err)
 				os.Exit(1)
+			}
+			// Validate signing key is present if configured.
+			if p.Signing.Key != "" {
+				valid, _ := git.ValidateGPGKey(p.Signing.Key, git.NewGPGRunner())
+				if !valid {
+					fmt.Printf("Warning: signing key %q is configured but not found in GPG keyring.\n", p.Signing.Key)
+				}
 			}
 			if !autoSilent {
 				if changed {
@@ -340,6 +365,74 @@ func buildImportCmd(mgr *profile.Manager) *cobra.Command {
 			}
 		},
 	}
+}
+
+// buildValidateGPGCmd builds the validate-gpg subcommand that checks whether
+// configured signing keys are present in the GPG keyring.
+func buildValidateGPGCmd(mgr *profile.Manager, g git.Runner) *cobra.Command {
+	var profileName string
+
+	cmd := &cobra.Command{
+		Use:   "validate-gpg [profile]",
+		Short: "Check whether configured GPG signing keys are present in the keyring",
+		Long: `Check whether each profile's user.signingkey is available in 'gpg -K'.
+
+Without arguments, validates all profiles. With a profile name argument,
+validates only that profile. Exits 0 if all checked keys are valid,
+exits 1 with a warning if any key is missing.`,
+		Args: cobra.RangeArgs(0, 1),
+		Run: func(cmd *cobra.Command, args []string) {
+			var profiles []profile.Profile
+			if profileName != "" {
+				p, ok, err := mgr.Get(profileName)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					os.Exit(1)
+				}
+				if !ok {
+					fmt.Printf("Error: profile %q not found.\n", profileName)
+					os.Exit(1)
+				}
+				profiles = []profile.Profile{p}
+			} else {
+				for _, p := range mgr.Profiles {
+					resolved, _, err := mgr.Get(p.Name)
+					if err != nil {
+						continue
+					}
+					profiles = append(profiles, resolved)
+				}
+			}
+
+			hadWarning := false
+			for _, p := range profiles {
+				if p.Signing.Key == "" {
+					continue
+				}
+				valid, err := git.ValidateGPGKey(p.Signing.Key, git.NewGPGRunner())
+				if err != nil {
+					fmt.Printf("Warning: error checking key %q for profile %q: %v\n", p.Signing.Key, p.Name, err)
+					hadWarning = true
+					continue
+				}
+				if !valid {
+					fmt.Printf("Warning: profile %q has signing key %q which is not in GPG keyring.\n", p.Name, p.Signing.Key)
+					hadWarning = true
+				}
+			}
+			if hadWarning {
+				os.Exit(1)
+			}
+			if profileName != "" {
+				fmt.Printf("Profile %q: signing key OK.\n", profileName)
+			} else {
+				fmt.Println("All profiles: signing keys OK.")
+			}
+		},
+	}
+	cmd.Flags().StringVar(&profileName, "profile", "", "Profile name to validate (default: all)")
+
+	return cmd
 }
 
 func buildWorktreeCmd(appCfg config.AppConfig, g git.Runner) *cobra.Command {
