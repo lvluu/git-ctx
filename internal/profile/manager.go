@@ -221,3 +221,26 @@ func (m *Manager) RemoveTemplate(name string) bool {
 	}
 	return ok
 }
+
+// DiffProfiles compares two resolved profiles and returns the delta.
+// The map key is the git config key name (e.g. "user.name").
+// The [2]string is [oldValue, newValue]; empty string means the key was absent.
+func DiffProfiles(a, b Profile) map[string][2]string {
+	delta := make(map[string][2]string)
+	configKeys := []struct {
+		key   string
+		getVal func(p Profile) string
+	}{
+		{"user.name", func(p Profile) string { return p.Name }},
+		{"user.email", func(p Profile) string { return p.Email }},
+		{"user.signingkey", func(p Profile) string { return p.Signing.Key }},
+	}
+	for _, ck := range configKeys {
+		oldVal := ck.getVal(a)
+		newVal := ck.getVal(b)
+		if oldVal != newVal {
+			delta[ck.key] = [2]string{oldVal, newVal}
+		}
+	}
+	return delta
+}
